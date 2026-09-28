@@ -34,18 +34,10 @@ jobs:
         with:
           flutter-version: '3.24.0'
           channel: 'stable'
-          cache: true
-
-      - name: Verify Flutter in PATH
-        run: |
-          flutter --version
-          which flutter
 
       - name: Build APK with Flet
         run: |
-          flet build apk --verbose
-        env:
-          FLUTTER_ROOT: ${{ env.FLUTTER_ROOT }}
+          yes | flet build apk --yes --verbose
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
