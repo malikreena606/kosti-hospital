@@ -86,17 +86,6 @@ def main(page: ft.Page):
         current_patient["clinic"] = clinic_name
         date_field = ft.TextField(label="تاريخ الموعد", text_align=ft.TextAlign.RIGHT, width=320)
 
-        image_preview = ft.Container(
-            content=ft.Text("لا توجد صورة", size=12, color=ft.Colors.GREY_600),
-            width=100, height=100,
-            bgcolor=ft.Colors.GREY_200,
-            border_radius=8,
-            alignment=ft.Alignment.CENTER
-        )
-
-        def attach_image(e):
-            show_snack("📎 ميزة إرفاق الصور ستتوفر قريباً")
-
         def confirm_booking(e):
             date_val = date_field.value.strip() if date_field.value else ""
             if not date_val:
@@ -119,14 +108,6 @@ def main(page: ft.Page):
             ft.Text(f"حجز في: {clinic_name}", size=18, weight=ft.FontWeight.BOLD),
             ft.Text("سعر التذكرة: 10,000 جنيه", size=14, color=ft.Colors.BLUE_700),
             date_field,
-            ft.Container(height=10),
-            ft.Row([
-                image_preview,
-                ft.Button(content="📎 إرفاق صورة", on_click=attach_image,
-                          width=180, height=45,
-                          bgcolor=ft.Colors.BLUE_600, color=ft.Colors.WHITE)
-            ], alignment=ft.MainAxisAlignment.CENTER, spacing=10),
-            ft.Container(height=10),
             ft.Button(content="تأكيد الحجز", on_click=confirm_booking, width=320, height=45,
                       bgcolor=ft.Colors.GREEN_600, color=ft.Colors.WHITE),
             ft.TextButton(content="العودة", on_click=lambda e: show_clinics_screen())
