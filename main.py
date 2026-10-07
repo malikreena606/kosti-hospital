@@ -85,7 +85,7 @@ def main(page: ft.Page):
                 bgcolor=color,
                 duration=3000
             )
-            page.show_dialog(snack)
+            page.open(snack)
             page.update()
         except Exception as e:
             print(f"Snack error: {e}")
