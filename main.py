@@ -78,6 +78,7 @@ def main(page: ft.Page):
     current_patient = {"nat_id": "", "name": ""}
     ADMIN_PASSWORD = "admin123"
 
+    # ============ SnackBar (Flet 1.0.1) ============
     def show_snack(text, color="#1976D2"):
         try:
             snack = ft.SnackBar(
@@ -85,7 +86,7 @@ def main(page: ft.Page):
                 bgcolor=color,
                 duration=3000
             )
-            page.open(snack)
+            page.show_dialog(snack)
             page.update()
         except Exception as e:
             print(f"Snack error: {e}")
@@ -103,6 +104,7 @@ def main(page: ft.Page):
             text_align=ft.TextAlign.RIGHT,
             expand=True,
             border_color="#1976D2",
+            color="black",
         )
         nat_field = ft.TextField(
             label="الرقم الوطني",
@@ -111,12 +113,14 @@ def main(page: ft.Page):
             keyboard_type=ft.KeyboardType.NUMBER,
             max_length=11,
             border_color="#1976D2",
+            color="black",
         )
         phone_field = ft.TextField(
             label="رقم الهاتف",
             text_align=ft.TextAlign.RIGHT,
             expand=True,
             border_color="#1976D2",
+            color="black",
         )
 
         def handle_login(ev):
@@ -367,7 +371,7 @@ def main(page: ft.Page):
         page.update()
 
     # ============================================================
-    # 4) الحجز - مع حقل إرفاق صور
+    # 4) الحجز
     # ============================================================
     def show_booking_screen(clinic_name, doctor_name, specialization):
         page.clean()
@@ -378,6 +382,7 @@ def main(page: ft.Page):
             text_align=ft.TextAlign.RIGHT,
             expand=True,
             border_color="#43A047",
+            color="black",
         )
 
         date_field = ft.TextField(
@@ -385,6 +390,7 @@ def main(page: ft.Page):
             text_align=ft.TextAlign.RIGHT,
             expand=True,
             border_color="#43A047",
+            color="black",
         )
 
         def attach_image(ev):
@@ -591,6 +597,7 @@ def main(page: ft.Page):
             text_align=ft.TextAlign.RIGHT,
             expand=True,
             border_color="#8E24AA",
+            color="black",
         )
 
         def do_login(ev):
@@ -658,10 +665,10 @@ def main(page: ft.Page):
         for aid, name, date, clinic, phone in rows:
             table_rows.append(
                 ft.DataRow(cells=[
-                    ft.DataCell(ft.Text(name or "", size=14)),
-                    ft.DataCell(ft.Text(date or "", size=14)),
-                    ft.DataCell(ft.Text(clinic or "", size=14)),
-                    ft.DataCell(ft.Text(phone or "", size=14)),
+                    ft.DataCell(ft.Text(name or "", size=14, color="black")),
+                    ft.DataCell(ft.Text(date or "", size=14, color="black")),
+                    ft.DataCell(ft.Text(clinic or "", size=14, color="black")),
+                    ft.DataCell(ft.Text(phone or "", size=14, color="black")),
                 ])
             )
 
@@ -719,4 +726,4 @@ def main(page: ft.Page):
 
 
 if __name__ == "__main__":
-    ft.app(target=main)
+    ft.run(main)
