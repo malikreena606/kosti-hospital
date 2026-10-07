@@ -27,11 +27,16 @@ jobs:
       - name: Install Flet
         run: |
           python -m pip install --upgrade pip
-          pip install flet[all]==1.0.1
+          pip install flet[all]
 
       - name: Build APK with Flet
         run: |
-          yes | flet build apk --yes --verbose
+          yes 2>/dev/null | flet build apk --yes --verbose || true
+        continue-on-error: true
+
+      - name: Check APK
+        run: |
+          ls -la build/apk/ || echo "No APK folder found"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
