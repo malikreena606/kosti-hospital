@@ -35,8 +35,15 @@ jobs:
           flutter-version: '3.24.0'
           channel: 'stable'
 
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Accept Android Licenses
+        run: |
+          yes | sdkmanager --licenses || true
+
       - name: Build APK
-        run: flet build apk --yes
+        run: yes | flet build apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
