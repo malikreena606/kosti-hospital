@@ -1,4 +1,4 @@
-    import flet as ft
+import flet as ft
 import sqlite3
 import os
 from datetime import datetime
@@ -11,13 +11,9 @@ if os.environ.get("FLET_APP_STORAGE_DATA"):
 else:
     DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "kosti_hospital.db")
 
-# سعر التذكرة
 TICKET_PRICE = "10,000 جنيه"
 
 
-# ============================================================
-# إعداد قاعدة البيانات
-# ============================================================
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -37,22 +33,13 @@ def init_db():
             clinic_name TEXT,
             doctor_name TEXT,
             appointment_date TEXT,
-            booked_at TEXT,
-            image_path TEXT
+            booked_at TEXT
         )
     """)
-    # ترقية الجدول - إضافة عمود الصورة إذا ما كان موجود
-    try:
-        cursor.execute("ALTER TABLE appointments ADD COLUMN image_path TEXT")
-    except sqlite3.OperationalError:
-        pass
     conn.commit()
     conn.close()
 
 
-# ============================================================
-# البيانات الثابتة
-# ============================================================
 CLINICS = [
     {"name": "عيادة الباطنية", "room": "غرفة 101", "icon": ft.Icons.MEDICAL_SERVICES, "color": "#1976D2"},
     {"name": "عيادة الأطفال", "room": "غرفة 103", "icon": ft.Icons.CHILD_CARE, "color": "#43A047"},
@@ -72,9 +59,6 @@ DOCTORS = {
 }
 
 
-# ============================================================
-# التطبيق الرئيسي
-# ============================================================
 def main(page: ft.Page):
     page.title = "مستشفى كوستي التعليمي"
     page.rtl = True
@@ -91,18 +75,9 @@ def main(page: ft.Page):
 
     init_db()
 
-    current_patient = {"nat_id": "", "name": "", "image_path": ""}
+    current_patient = {"nat_id": "", "name": ""}
     ADMIN_PASSWORD = "admin123"
 
-    # ============================================================
-    # FilePicker للصور
-    # ============================================================
-    file_picker = ft.FilePicker()
-    page.overlay.append(file_picker)
-
-    # ============================================================
-    # التنبيه
-    # ============================================================
     def show_snack(text, color="#1976D2"):
         try:
             snack = ft.SnackBar(
@@ -116,7 +91,7 @@ def main(page: ft.Page):
             print(f"Snack error: {e}")
 
     # ============================================================
-    # 1) شاشة تسجيل الدخول
+    # 1) تسجيل الدخول
     # ============================================================
     def show_login_screen(e=None):
         page.clean()
@@ -128,8 +103,6 @@ def main(page: ft.Page):
             text_align=ft.TextAlign.RIGHT,
             expand=True,
             border_color="#1976D2",
-            focused_border_color="#0D47A1",
-            prefix_icon=ft.Icons.PERSON,
         )
         nat_field = ft.TextField(
             label="الرقم الوطني",
@@ -138,16 +111,12 @@ def main(page: ft.Page):
             keyboard_type=ft.KeyboardType.NUMBER,
             max_length=11,
             border_color="#1976D2",
-            focused_border_color="#0D47A1",
-            prefix_icon=ft.Icons.BADGE,
         )
         phone_field = ft.TextField(
             label="رقم الهاتف",
             text_align=ft.TextAlign.RIGHT,
             expand=True,
             border_color="#1976D2",
-            focused_border_color="#0D47A1",
-            prefix_icon=ft.Icons.PHONE,
         )
 
         def handle_login(ev):
@@ -155,7 +124,6 @@ def main(page: ft.Page):
             nat_id = (nat_field.value or "").strip()
             phone = (phone_field.value or "").strip()
 
-            # ✅ التحقق المبسّط (الهاتف بدون شرط)
             if not name:
                 show_snack("⚠️ أدخل الاسم", "#E53935")
                 return
@@ -165,7 +133,6 @@ def main(page: ft.Page):
             if not nat_id.isdigit() or len(nat_id) != 11:
                 show_snack("⚠️ الرقم الوطني 11 رقماً", "#E53935")
                 return
-            # ✅ رقم الهاتف: بدون شرط (يكفي إنه مو فاضي)
             if not phone:
                 show_snack("⚠️ أدخل رقم الهاتف", "#E53935")
                 return
@@ -194,21 +161,14 @@ def main(page: ft.Page):
             show_snack("✅ تم تسجيل الدخول", "#43A047")
             show_clinics_screen()
 
-        # شعار المستشفى (صورة من الإنترنت)
-        logo = ft.Container(
-            content=ft.Icon(ft.Icons.LOCAL_HOSPITAL, size=90, color="#1976D2"),
-            alignment=ft.Alignment.CENTER,
-            animate_scale=ft.Animation(800, ft.AnimationCurve.BOUNCE_OUT),
-        )
-
         page.add(
             ft.Column([
                 ft.Container(expand=True),
-                logo,
+                ft.Icon(ft.Icons.LOCAL_HOSPITAL, size=90, color="#1976D2"),
                 ft.Text("مستشفى كوستي التعليمي", size=24,
                         weight=ft.FontWeight.BOLD, color="#0D47A1",
                         text_align=ft.TextAlign.CENTER),
-                ft.Text("نظام الحجز الذكي", size=15, color="#546E7A"),
+                ft.Text("نظام الحجز الإلكتروني", size=15, color="#546E7A"),
                 ft.Container(height=25),
                 name_field,
                 nat_field,
@@ -226,7 +186,6 @@ def main(page: ft.Page):
                     bgcolor="#1976D2",
                     style=ft.ButtonStyle(
                         shape=ft.RoundedRectangleBorder(radius=12),
-                        elevation=4
                     )
                 ),
                 ft.Container(expand=True),
@@ -235,12 +194,11 @@ def main(page: ft.Page):
         page.update()
 
     # ============================================================
-    # 2) شاشة العيادات
+    # 2) العيادات
     # ============================================================
     def show_clinics_screen(e=None):
         page.clean()
 
-        # بطاقة السعر
         price_card = ft.Container(
             content=ft.Row([
                 ft.Icon(ft.Icons.CONFIRMATION_NUMBER, color="white", size=28),
@@ -253,7 +211,6 @@ def main(page: ft.Page):
             padding=15,
             bgcolor="#FF9800",
             border_radius=12,
-            animate_opacity=ft.Animation(600, ft.AnimationCurve.EASE_IN),
         )
 
         clinic_cards = []
@@ -286,13 +243,12 @@ def main(page: ft.Page):
                 border=ft.border.all(1, "#E0E0E0"),
                 on_click=make_handler(clinic["name"]),
                 ink=True,
-                animate_scale=ft.Animation(300, ft.AnimationCurve.EASE_OUT),
             )
             clinic_cards.append(card)
 
         page.add(
             ft.Column([
-                ft.Text(f"🏥 العيادات المتاحة", size=22,
+                ft.Text("🏥 العيادات المتاحة", size=22,
                         weight=ft.FontWeight.BOLD, color="#0D47A1"),
                 ft.Text(f"مرحباً: {current_patient['name']}", size=14, color="#43A047"),
                 ft.Container(height=10),
@@ -332,7 +288,7 @@ def main(page: ft.Page):
         page.update()
 
     # ============================================================
-    # 3) شاشة الأطباء
+    # 3) الأطباء
     # ============================================================
     def show_doctors_screen(clinic_name):
         page.clean()
@@ -389,7 +345,6 @@ def main(page: ft.Page):
                 bgcolor="white",
                 border_radius=14,
                 border=ft.border.all(1, "#E0E0E0"),
-                animate_scale=ft.Animation(300, ft.AnimationCurve.EASE_OUT),
             )
             doctor_cards.append(card)
 
@@ -412,11 +367,10 @@ def main(page: ft.Page):
         page.update()
 
     # ============================================================
-    # 4) شاشة الحجز — مع إرفاق صورة
+    # 4) الحجز - مع حقل إرفاق صور
     # ============================================================
     def show_booking_screen(clinic_name, doctor_name, specialization):
         page.clean()
-        current_patient["image_path"] = ""
 
         name_field = ft.TextField(
             label="اسم المريض",
@@ -424,8 +378,6 @@ def main(page: ft.Page):
             text_align=ft.TextAlign.RIGHT,
             expand=True,
             border_color="#43A047",
-            focused_border_color="#2E7D32",
-            prefix_icon=ft.Icons.PERSON,
         )
 
         date_field = ft.TextField(
@@ -433,57 +385,34 @@ def main(page: ft.Page):
             text_align=ft.TextAlign.RIGHT,
             expand=True,
             border_color="#43A047",
-            focused_border_color="#2E7D32",
-            prefix_icon=ft.Icons.CALENDAR_MONTH,
         )
 
-        # معاينة الصورة
-        image_preview = ft.Container(
-            content=ft.Text("لا توجد صورة", color="#90A4AE", size=12),
-            width=100, height=100,
-            bgcolor="#ECEFF1",
-            border_radius=10,
-            alignment=ft.Alignment.CENTER,
-            visible=True,
-        )
-
-        # إرفاق صورة
-        def pick_image(ev):
-            try:
-                file_picker.pick_files(
-                    allow_multiple=False,
-                    file_type=ft.FilePickerFileType.IMAGE
-                )
-                page.update()
-            except Exception as ex:
-                print(f"File picker error: {ex}")
-                show_snack("⚠️ الميزة غير مدعومة على هذا الجهاز", "#FF9800")
-
-        def on_file_result(e: ft.FilePickerResultEvent):
-            if e.files and len(e.files) > 0:
-                file_path = e.files[0].path
-                current_patient["image_path"] = file_path
-                image_preview.content = ft.Image(
-                    src=file_path,
-                    width=100, height=100,
-                    fit=ft.ImageFit.COVER,
-                    border_radius=10,
-                )
-                show_snack("✅ تم إرفاق الصورة", "#43A047")
-                page.update()
-
-        file_picker.on_result = on_file_result
+        # ✅ حقل إرفاق الصور
+        def attach_image(ev):
+            show_snack("📎 ميزة إرفاق الصور ستتوفر قريباً", "#FF9800")
 
         attach_btn = ft.Button(
             content=ft.Row([
                 ft.Icon(ft.Icons.ATTACH_FILE, color="white"),
-                ft.Text("إرفاق صورة", color="white",
+                ft.Text("إرفاق صور", color="white",
                         weight=ft.FontWeight.BOLD)
             ], alignment=ft.MainAxisAlignment.CENTER),
-            on_click=pick_image,
-            expand=True, height=45,
+            on_click=attach_image,
+            expand=True, height=50,
             bgcolor="#0288D1",
             style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10))
+        )
+
+        # معاينة الصورة
+        image_preview = ft.Container(
+            content=ft.Column([
+                ft.Icon(ft.Icons.IMAGE, size=40, color="#90A4AE"),
+                ft.Text("لا توجد صورة", color="#90A4AE", size=11)
+            ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=4),
+            width=110, height=110,
+            bgcolor="#ECEFF1",
+            border_radius=10,
+            alignment=ft.Alignment.CENTER,
         )
 
         def confirm_booking(ev):
@@ -503,12 +432,11 @@ def main(page: ft.Page):
                 cursor.execute("""
                     INSERT INTO appointments 
                     (patient_name, national_id, clinic_name, doctor_name,
-                     appointment_date, booked_at, image_path)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                     appointment_date, booked_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
                 """, (name_val, current_patient["nat_id"], clinic_name,
                       doctor_name, date_val,
-                      datetime.now().strftime("%Y-%m-%d %H:%M"),
-                      current_patient["image_path"]))
+                      datetime.now().strftime("%Y-%m-%d %H:%M")))
                 conn.commit()
                 conn.close()
             except sqlite3.Error as err:
@@ -554,13 +482,11 @@ def main(page: ft.Page):
                 name_field,
                 date_field,
                 ft.Container(height=10),
-                ft.Text("صورة التقارير/التحويل (اختياري)",
-                        size=12, color="#546E7A"),
+                ft.Text("📎 إرفاق صورة (اختياري):",
+                        size=13, color="#546E7A"),
                 ft.Row([
                     image_preview,
-                    ft.Column([
-                        attach_btn,
-                    ], expand=True)
+                    ft.Column([attach_btn], expand=True)
                 ], spacing=10),
                 ft.Container(height=15),
                 ft.Button(
@@ -574,7 +500,6 @@ def main(page: ft.Page):
                     bgcolor="#43A047",
                     style=ft.ButtonStyle(
                         shape=ft.RoundedRectangleBorder(radius=12),
-                        elevation=4
                     )
                 ),
                 ft.Container(height=5),
@@ -589,7 +514,7 @@ def main(page: ft.Page):
         page.update()
 
     # ============================================================
-    # 5) شاشة مواعيدي
+    # 5) مواعيدي
     # ============================================================
     def show_my_appointments_screen(e=None):
         page.clean()
@@ -599,7 +524,7 @@ def main(page: ft.Page):
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT appointment_id, patient_name, clinic_name,
-                       doctor_name, appointment_date, image_path
+                       doctor_name, appointment_date
                 FROM appointments
                 WHERE national_id = ?
                 ORDER BY appointment_id DESC
@@ -621,23 +546,16 @@ def main(page: ft.Page):
                 )
             )
         else:
-            for aid, name, clinic, doctor, date, img in rows:
-                row_items = [
-                    ft.Text(f"رقم الحجز: #{aid}", size=12, color="#546E7A"),
-                    ft.Text(f"👤 {name}", size=14,
-                            weight=ft.FontWeight.BOLD, color="#0D47A1"),
-                    ft.Text(f"👨‍⚕️ {doctor} / {clinic}", size=13, color="#37474F"),
-                    ft.Text(f"📅 {date}", size=12, color="#546E7A"),
-                ]
-                if img and os.path.exists(img):
-                    row_items.append(
-                        ft.Image(src=img, width=80, height=80,
-                                 fit=ft.ImageFit.COVER, border_radius=8)
-                    )
-
+            for aid, name, clinic, doctor, date in rows:
                 appt_cards.append(
                     ft.Container(
-                        content=ft.Column(row_items, spacing=4),
+                        content=ft.Column([
+                            ft.Text(f"رقم الحجز: #{aid}", size=12, color="#546E7A"),
+                            ft.Text(f"👤 {name}", size=14,
+                                    weight=ft.FontWeight.BOLD, color="#0D47A1"),
+                            ft.Text(f"👨‍⚕️ {doctor} / {clinic}", size=13, color="#37474F"),
+                            ft.Text(f"📅 {date}", size=12, color="#546E7A"),
+                        ], spacing=4),
                         padding=12, expand=True,
                         bgcolor="white",
                         border_radius=12,
@@ -675,8 +593,6 @@ def main(page: ft.Page):
             text_align=ft.TextAlign.RIGHT,
             expand=True,
             border_color="#8E24AA",
-            focused_border_color="#6A1B9A",
-            prefix_icon=ft.Icons.LOCK,
         )
 
         def do_login(ev):
@@ -720,7 +636,7 @@ def main(page: ft.Page):
         page.update()
 
     # ============================================================
-    # 7) لوحة الإدارة — جدول التقارير
+    # 7) لوحة الإدارة
     # ============================================================
     def show_admin_dashboard():
         page.clean()
