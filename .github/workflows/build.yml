@@ -29,14 +29,8 @@ jobs:
           python -m pip install --upgrade pip
           pip install flet[all]
 
-      - name: Setup Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          flutter-version: '3.24.0'
-          channel: 'stable'
-
       - name: Build APK
-        run: flet build apk
+        run: flet build apk --yes
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
