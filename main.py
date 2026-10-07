@@ -74,7 +74,7 @@ def main(page: ft.Page):
                 content=ft.Text("مستشفى كوستي التعليمي", size=22, weight=ft.FontWeight.BOLD, color=ft.Colors.BLUE_900),
                 alignment=ft.Alignment.CENTER
             ),
-            ft.Text("نظام الحجز الإلكتروني", size=14, color=ft.Colors.GREY_700),
+            ft.Text("يرجى إدخال البيانات", size=14, color=ft.Colors.GREY_700),
             nat_id_field, phone_field,
             ft.Button(content="تسجيل الدخول", on_click=handle_login, width=320, height=45,
                       bgcolor=ft.Colors.BLUE_600, color=ft.Colors.WHITE)
@@ -115,7 +115,6 @@ def main(page: ft.Page):
 
     def show_clinics_screen():
         page.clean()
-        # ✅ العيادات الجديدة (6 عيادات - بدون الجراحة)
         clinics = [
             "عيادة الباطنية",
             "عيادة الأطفال",
