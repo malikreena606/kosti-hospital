@@ -1,7 +1,9 @@
 [project]
 name = "kosti_hospital"
 version = "1.0.0"
+requires-python = ">=3.11,<3.13"
 
 [tool.flet]
 product = "Kosti Hospital"
 org = "sd.kosti.hospital"
+python_version = "3.11"
