@@ -36,7 +36,8 @@ jobs:
           channel: 'stable'
 
       - name: Build APK with Flet
-        run: flet build apk --yes
+        run: |
+          flet build apk --yes --verbose
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
