@@ -106,7 +106,6 @@ def main(page: ft.Page):
 
         page.add(ft.Column([
             ft.Text(f"حجز في: {clinic_name}", size=18, weight=ft.FontWeight.BOLD),
-            ft.Text("سعر التذكرة: 10,000 جنيه", size=14, color=ft.Colors.BLUE_700),
             date_field,
             ft.Button(content="تأكيد الحجز", on_click=confirm_booking, width=320, height=45,
                       bgcolor=ft.Colors.GREEN_600, color=ft.Colors.WHITE),
@@ -116,6 +115,7 @@ def main(page: ft.Page):
 
     def show_clinics_screen():
         page.clean()
+        # ✅ العيادات الجديدة (6 عيادات - بدون الجراحة)
         clinics = [
             "عيادة الباطنية",
             "عيادة الأطفال",
@@ -135,7 +135,6 @@ def main(page: ft.Page):
 
         page.add(ft.Column([
             ft.Text("اختر العيادة", size=20, weight=ft.FontWeight.BOLD, color=ft.Colors.BLUE_900),
-            ft.Text("سعر التذكرة: 10,000 جنيه", size=14, color=ft.Colors.BLUE_700),
             *buttons,
             ft.TextButton(content="تسجيل الخروج", on_click=show_login_screen, icon=ft.Icons.LOGOUT)
         ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=12))
