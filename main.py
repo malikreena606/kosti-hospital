@@ -86,7 +86,6 @@ def main(page: ft.Page):
         current_patient["clinic"] = clinic_name
         date_field = ft.TextField(label="تاريخ الموعد", text_align=ft.TextAlign.RIGHT, width=320)
 
-        # معاينة الصورة
         image_preview = ft.Container(
             content=ft.Text("لا توجد صورة", size=12, color=ft.Colors.GREY_600),
             width=100, height=100,
@@ -163,5 +162,6 @@ def main(page: ft.Page):
 
     show_login_screen()
 
+
 if __name__ == "__main__":
-    ft.app(target=main)
+    ft.run(main)
