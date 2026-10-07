@@ -24,12 +24,12 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install Flet 0.24.1
+      - name: Install Flet
         run: |
           python -m pip install --upgrade pip
-          pip install flet==0.24.1
+          pip install flet[all]
 
-      - name: Setup Flutter 3.24.0
+      - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.24.0'
