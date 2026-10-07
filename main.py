@@ -387,7 +387,6 @@ def main(page: ft.Page):
             border_color="#43A047",
         )
 
-        # ✅ حقل إرفاق الصور
         def attach_image(ev):
             show_snack("📎 ميزة إرفاق الصور ستتوفر قريباً", "#FF9800")
 
@@ -403,7 +402,6 @@ def main(page: ft.Page):
             style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10))
         )
 
-        # معاينة الصورة
         image_preview = ft.Container(
             content=ft.Column([
                 ft.Icon(ft.Icons.IMAGE, size=40, color="#90A4AE"),
@@ -721,4 +719,4 @@ def main(page: ft.Page):
 
 
 if __name__ == "__main__":
-    ft.run(main)
+    ft.app(target=main)
