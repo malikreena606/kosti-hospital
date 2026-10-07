@@ -41,12 +41,12 @@ def init_db():
 
 
 CLINICS = [
-    {"name": "عيادة الباطنية", "room": "غرفة 101", "icon": ft.Icons.MEDICAL_SERVICES, "color": "#1976D2"},
+    {"name": "عيادة الباطنية", "room": "غرفة 101", "icon": ft.Icons.LOCAL_HOSPITAL, "color": "#1976D2"},
     {"name": "عيادة الأطفال", "room": "غرفة 103", "icon": ft.Icons.CHILD_CARE, "color": "#43A047"},
-    {"name": "عيادة النساء والتوليد", "room": "غرفة 104", "icon": ft.Icons.PREGNANT_WOMAN, "color": "#E91E63"},
-    {"name": "عيادة العظام", "room": "غرفة 105", "icon": ft.Icons.ACCESSIBILITY_NEW, "color": "#FB8C00"},
+    {"name": "عيادة النساء والتوليد", "room": "غرفة 104", "icon": ft.Icons.FAVORITE, "color": "#E91E63"},
+    {"name": "عيادة العظام", "room": "غرفة 105", "icon": ft.Icons.HEALING, "color": "#FB8C00"},
     {"name": "عيادة المخ والأعصاب", "room": "غرفة 106", "icon": ft.Icons.PSYCHOLOGY, "color": "#8E24AA"},
-    {"name": "عيادة الجلدية", "room": "غرفة 107", "icon": ft.Icons.FACE_RETOUCHING_NATURAL, "color": "#00897B"},
+    {"name": "عيادة الجلدية", "room": "غرفة 107", "icon": ft.Icons.FACE, "color": "#00897B"},
 ]
 
 DOCTORS = {
@@ -78,7 +78,6 @@ def main(page: ft.Page):
     current_patient = {"nat_id": "", "name": ""}
     ADMIN_PASSWORD = "admin123"
 
-    # ============ SnackBar (Flet 1.0.1) ============
     def show_snack(text, color="#1976D2"):
         try:
             snack = ft.SnackBar(
@@ -207,7 +206,7 @@ def main(page: ft.Page):
             content=ft.Row([
                 ft.Icon(ft.Icons.CONFIRMATION_NUMBER, color="white", size=28),
                 ft.Column([
-                    ft.Text("سعر التذكرة", size=13, color="white70"),
+                    ft.Text("سعر التذكرة", size=13, color="white"),
                     ft.Text(TICKET_PRICE, size=18, color="white",
                             weight=ft.FontWeight.BOLD),
                 ], spacing=2)
@@ -689,8 +688,6 @@ def main(page: ft.Page):
             data_row_min_height=55,
             data_row_max_height=70,
             column_spacing=15,
-            horizontal_lines=ft.BorderSide(1, "#E0E0E0"),
-            vertical_lines=ft.BorderSide(1, "#E0E0E0"),
             border_radius=10,
         )
 
