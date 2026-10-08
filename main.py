@@ -1,11 +1,18 @@
 import flet as ft
 import sqlite3
 import os
+import shutil
+import time
 
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "kosti_hospital.db")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = os.path.join(BASE_DIR, "kosti_hospital.db")
+UPLOADS_DIR = os.path.join(BASE_DIR, "uploads")
+
+TICKET_PRICE = "10.000"
 
 
 def init_db():
+    os.makedirs(UPLOADS_DIR, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("""
@@ -20,9 +27,15 @@ def init_db():
             appointment_id INTEGER PRIMARY KEY AUTOINCREMENT,
             national_id TEXT,
             clinic_name TEXT,
-            appointment_date TEXT
+            appointment_date TEXT,
+            attachment_path TEXT
         )
     """)
+    # ترقية قاعدة بيانات قديمة: إضافة عمود المرفق إذا لم يكن موجوداً
+    cursor.execute("PRAGMA table_info(appointments)")
+    columns = [row[1] for row in cursor.fetchall()]
+    if "attachment_path" not in columns:
+        cursor.execute("ALTER TABLE appointments ADD COLUMN attachment_path TEXT")
     conn.commit()
     conn.close()
 
@@ -33,8 +46,9 @@ def main(page: ft.Page):
     page.vertical_alignment = ft.MainAxisAlignment.CENTER
     page.horizontal_alignment = ft.CrossAxisAlignment.CENTER
     page.window.width = 420
-    page.window.height = 650
+    page.window.height = 750
     page.bgcolor = ft.Colors.WHITE
+    page.scroll = ft.ScrollMode.AUTO
 
     init_db()
     current_patient = {"nat_id": "", "clinic": ""}
@@ -119,6 +133,7 @@ def main(page: ft.Page):
     def show_booking_screen(clinic_name):
         page.clean()
         current_patient["clinic"] = clinic_name
+        attachment = {"path": None}  # المسار الأصلي للصورة المختارة
 
         date_field = ft.TextField(
             label="تاريخ الموعد (مثال: 2026-06-15)",
@@ -128,19 +143,59 @@ def main(page: ft.Page):
             focused_border_color=ft.Colors.GREEN_700
         )
 
+        attach_label = ft.Text("لم يتم اختيار صورة", size=13, color=ft.Colors.GREY_700)
+
+        async def pick_image(e):
+            files = await ft.FilePicker().pick_files(
+                dialog_title="اختر صورة",
+                file_type=ft.FilePickerFileType.IMAGE,
+                allow_multiple=False
+            )
+            if files:
+                f = files[0]
+                attachment["path"] = f.path
+                attachment["name"] = f.name
+                attach_label.value = f"تم اختيار: {f.name}"
+                attach_label.color = ft.Colors.GREEN_700
+                page.update()
+
+        attach_btn = ft.OutlinedButton(
+            content="إرفاق صورة",
+            icon=ft.Icons.ATTACH_FILE,
+            on_click=pick_image,
+            width=320,
+            height=45
+        )
+
         def confirm_booking(e):
             date_val = date_field.value.strip() if date_field.value else ""
             if not date_val:
                 show_snack("الرجاء تحديد تاريخ الموعد")
                 return
 
+            # حفظ نسخة من الصورة المرفقة داخل مجلد uploads
+            saved_path = None
+            src = attachment.get("path")
+            if src and os.path.exists(src):
+                try:
+                    ext = os.path.splitext(src)[1]
+                    dest_name = f"{current_patient['nat_id']}_{int(time.time())}{ext}"
+                    saved_path = os.path.join(UPLOADS_DIR, dest_name)
+                    shutil.copy2(src, saved_path)
+                except OSError as file_err:
+                    show_snack(f"تعذر حفظ الصورة: {file_err}")
+                    return
+            elif attachment.get("name"):
+                # في حال عدم توفر المسار (نسخة الويب) نحفظ اسم الملف فقط
+                saved_path = attachment["name"]
+
             try:
                 conn = sqlite3.connect(DB_PATH)
                 cursor = conn.cursor()
                 cursor.execute("""
-                    INSERT INTO appointments (national_id, clinic_name, appointment_date)
-                    VALUES (?, ?, ?)
-                """, (current_patient["nat_id"], clinic_name, date_val))
+                    INSERT INTO appointments (national_id, clinic_name, appointment_date, attachment_path)
+                    VALUES (?, ?, ?, ?)
+                """, (current_patient["nat_id"], clinic_name, date_val, saved_path))
                 conn.commit()
                 conn.close()
             except sqlite3.Error as db_err:
@@ -170,6 +225,8 @@ def main(page: ft.Page):
                 ft.Text(f"حجز موعد في: {clinic_name}", size=18, weight=ft.FontWeight.BOLD, color=ft.Colors.BLUE_900),
                 ft.Container(height=15),
                 date_field,
+                attach_btn,
+                attach_label,
                 ft.Container(height=10),
                 confirm_btn,
                 ft.Container(height=5),
@@ -183,9 +240,11 @@ def main(page: ft.Page):
 
         clinics = [
             "عيادة الباطنية",
-            "عيادة الجراحة",
             "عيادة الأطفال",
-            "عيادة النساء والتوليد"
+            "عيادة النساء والتوليد",
+            "عيادة العظام",
+            "عيادة الجلدية",
+            "عيادة المخ والأعصاب"
         ]
 
         clinic_buttons = []
@@ -206,10 +265,25 @@ def main(page: ft.Page):
             icon=ft.Icons.LOGOUT
         )
 
+        price_box = ft.Container(
+            content=ft.Text(
+                f"سعر التذكرة: {TICKET_PRICE} جنيه",
+                size=15,
+                weight=ft.FontWeight.BOLD,
+                color=ft.Colors.ORANGE_900
+            ),
+            bgcolor=ft.Colors.ORANGE_50,
+            padding=10,
+            border_radius=8,
+            width=320,
+            alignment=ft.Alignment.CENTER
+        )
+
         page.add(
             ft.Column([
                 ft.Text("اختر العيادة المطلوبة", size=20, weight=ft.FontWeight.BOLD, color=ft.Colors.BLUE_900),
-                ft.Container(height=10),
+                price_box,
+                ft.Container(height=5),
                 *clinic_buttons,
                 ft.Container(height=15),
                 logout_btn
