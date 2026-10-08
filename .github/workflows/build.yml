@@ -28,7 +28,7 @@ jobs:
         run: pip install "flet>=0.80"
 
       - name: Build APK
-        run: flet build apk --verbose
+        run: flet build apk --yes --verbose
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
