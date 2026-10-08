@@ -1,6 +1,7 @@
 [project]
 name = "kosti_hospital"
 version = "1.0.0"
+dependencies = ["flet>=0.80"]
 
 [tool.flet]
 product = "Kosti Hospital"
