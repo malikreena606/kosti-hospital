@@ -27,6 +27,9 @@ jobs:
       - name: Install Flet
         run: pip install "flet>=0.80"
 
+      - name: Accept Android licenses
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses || true
+
       - name: Build APK
         run: flet build apk --yes --verbose
 
