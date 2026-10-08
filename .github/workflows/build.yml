@@ -1,9 +1,9 @@
 name: Build Android APK
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
-  workflow_dispatch:
 
 jobs:
   build-apk:
@@ -25,13 +25,18 @@ jobs:
           java-version: "17"
 
       - name: Install Flet
-        run: pip install "flet>=0.80"
+        run: pip install "flet[all]>=1.0"
 
       - name: Accept Android licenses
         run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses || true
 
       - name: Build APK
-        run: flet build apk --yes --verbose
+        shell: bash
+        run: flet build apk --yes --verbose 2>&1 | tee build.log
+
+      - name: Show last lines of log (on failure)
+        if: failure()
+        run: tail -n 80 build.log
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
