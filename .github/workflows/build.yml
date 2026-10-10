@@ -37,7 +37,7 @@ jobs:
           cache: true
 
       - name: Build APK
-        run: flet build apk
+        run: flet build apk --yes
         env:
           FLET_CLI_SKIP_FLUTTER_DOCTOR: "true"
 
