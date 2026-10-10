@@ -5,3 +5,7 @@ version = "1.0.0"
 [tool.flet]
 product = "Kosti Hospital"
 org = "sd.kosti.hospital"
+
+[tool.flet.android]
+min_sdk_version = 21
+target_sdk_version = 33
