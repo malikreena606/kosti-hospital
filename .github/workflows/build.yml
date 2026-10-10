@@ -1,45 +1,39 @@
-name: Build Android APK
+name: Build APK
 
 on:
-  workflow_dispatch:
   push:
-    branches: [main]
+    branches: [ main ]
+  workflow_dispatch:
 
 jobs:
-  build-apk:
+  build:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: '3.11'
 
-      - name: Setup Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-
-      - name: Install Flet
-        run: pip install "flet[all]>=1.0"
-
-      - name: Accept Android licenses
-        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses || true
+      - name: Install Flet 0.24.1
+        run: |
+          python -m pip install --upgrade pip
+          pip install flet==0.24.1
 
       - name: Build APK
-        shell: bash
-        run: flet build apk --yes --verbose 2>&1 | tee build.log
-
-      - name: Show last lines of log (on failure)
-        if: failure()
-        run: tail -n 80 build.log
+        run: flet build apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: kosti-hospital-apk
-          path: build/apk
+          path: build/apk/*.apk
