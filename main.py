@@ -33,7 +33,7 @@ def main(page: ft.Page):
     page.vertical_alignment = ft.MainAxisAlignment.CENTER
     page.horizontal_alignment = ft.CrossAxisAlignment.CENTER
     page.window.width = 420
-    page.window.height = 700
+    page.window.height = 720
     page.bgcolor = ft.Colors.WHITE
     page.scroll = ft.ScrollMode.AUTO
 
@@ -121,6 +121,28 @@ def main(page: ft.Page):
         page.clean()
         current_patient["clinic"] = clinic_name
 
+        # ============ بطاقة معلومات الدفع ============
+        payment_card = ft.Container(
+            content=ft.Column([
+                ft.Row([
+                    ft.Icon(ft.Icons.CONFIRMATION_NUMBER, color=ft.Colors.WHITE, size=24),
+                    ft.Text("سعر التذكرة: 5,000 جنيه", size=16,
+                            weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE)
+                ], alignment=ft.MainAxisAlignment.CENTER, spacing=8),
+                ft.Divider(height=1, color=ft.Colors.WHITE),
+                ft.Row([
+                    ft.Icon(ft.Icons.ACCOUNT_BALANCE, color=ft.Colors.WHITE, size=24),
+                    ft.Text("رقم حساب الدفع: 9147234", size=16,
+                            weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE)
+                ], alignment=ft.MainAxisAlignment.CENTER, spacing=8)
+            ], spacing=10, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+            padding=15,
+            width=320,
+            bgcolor=ft.Colors.ORANGE_700,
+            border_radius=12
+        )
+        # =========================================
+
         date_field = ft.TextField(
             label="تاريخ الموعد (مثال: 2026-06-15)",
             text_align=ft.TextAlign.RIGHT,
@@ -195,7 +217,11 @@ def main(page: ft.Page):
         page.add(
             ft.Column([
                 ft.Text(f"حجز موعد في: {clinic_name}", size=18, weight=ft.FontWeight.BOLD, color=ft.Colors.BLUE_900),
+                ft.Container(height=10),
+                # ============ بطاقة الدفع ============
+                payment_card,
                 ft.Container(height=15),
+                # ====================================
                 date_field,
                 ft.Container(height=10),
                 # ============ حقل إرفاق الصورة ============
