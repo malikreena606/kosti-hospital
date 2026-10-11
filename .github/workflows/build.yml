@@ -28,8 +28,10 @@ jobs:
           pip install flet
 
       - name: Build Flet APK
+        env:
+          FLET_CI: "true"
         run: |
-          flet build apk --project kosti_hospital
+          yes | flet build apk --project kosti_hospital || flet build apk --project kosti_hospital
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
