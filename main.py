@@ -31,14 +31,16 @@ def main(page: ft.Page):
     page.title = "مستشفى كوستي التعليمي"
     page.rtl = True
     page.bgcolor = ft.Colors.WHITE
+    page.vertical_alignment = ft.MainAxisAlignment.CENTER
+    page.horizontal_alignment = ft.CrossAxisAlignment.CENTER
 
     init_db()
     current_patient = {"nat_id": "", "clinic": ""}
 
     def show_snack(text):
-        page.show_dialog(
-            ft.SnackBar(ft.Text(text, color=ft.Colors.WHITE), bgcolor=ft.Colors.BLUE_700)
-        )
+        page.snack_bar = ft.SnackBar(ft.Text(text, color=ft.Colors.WHITE), bgcolor=ft.Colors.BLUE_700)
+        page.snack_bar.open = True
+        page.update()
 
     def show_login_screen(e=None):
         page.clean()
@@ -67,12 +69,12 @@ def main(page: ft.Page):
             show_clinics_screen()
 
         page.add(ft.Column([
-            ft.Text("مستشفى كوستي التعليمي", size=22, weight=ft.FontWeight.BOLD),
-            ft.Text("نظام الحجز الإلكتروني", size=14),
+            ft.Text("مستشفى كوستي التعليمي", size=22, weight=ft.FontWeight.BOLD, color=ft.Colors.BLUE_900),
+            ft.Text("نظام الحجز الإلكتروني", size=14, color=ft.Colors.GREY_700),
             nat_id_field,
             phone_field,
-            ft.Button(content="تسجيل الدخول", on_click=handle_login, width=320, height=45,
-                      bgcolor=ft.Colors.BLUE_600, color=ft.Colors.WHITE)
+            ft.ElevatedButton(text="تسجيل الدخول", on_click=handle_login, width=320, height=45,
+                              bgcolor=ft.Colors.BLUE_600, color=ft.Colors.WHITE)
         ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=15))
         page.update()
 
@@ -102,14 +104,14 @@ def main(page: ft.Page):
             height=110,
             bgcolor=ft.Colors.GREY_200,
             border_radius=8,
-            alignment=ft.Alignment.CENTER
+            alignment=ft.alignment.center
         )
 
         def attach_image(e):
             show_snack("📎 ميزة إرفاق الصور ستتوفر قريباً")
 
-        attach_btn = ft.Button(
-            content="📎 إرفاق صورة",
+        attach_btn = ft.ElevatedButton(
+            text="📎 إرفاق صورة",
             on_click=attach_image,
             width=180,
             height=50,
@@ -136,7 +138,7 @@ def main(page: ft.Page):
             show_clinics_screen()
 
         page.add(ft.Column([
-            ft.Text(f"حجز في: {clinic_name}", size=18, weight=ft.FontWeight.BOLD),
+            ft.Text(f"حجز في: {clinic_name}", size=18, weight=ft.FontWeight.BOLD, color=ft.Colors.BLUE_900),
             ft.Container(height=10),
             payment_card,
             ft.Container(height=10),
@@ -146,8 +148,8 @@ def main(page: ft.Page):
             ft.Row([image_preview, attach_btn],
                    alignment=ft.MainAxisAlignment.CENTER, spacing=15),
             ft.Container(height=10),
-            ft.Button(content="تأكيد الحجز", on_click=confirm_booking, width=320, height=45,
-                      bgcolor=ft.Colors.GREEN_600, color=ft.Colors.WHITE),
+            ft.ElevatedButton(text="تأكيد الحجز", on_click=confirm_booking, width=320, height=45,
+                              bgcolor=ft.Colors.GREEN_600, color=ft.Colors.WHITE),
             ft.TextButton(content="العودة", on_click=lambda e: show_clinics_screen())
         ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=15))
         page.update()
@@ -157,15 +159,15 @@ def main(page: ft.Page):
         clinics = ["عيادة الباطنية", "عيادة الجراحة", "عيادة الأطفال", "عيادة النساء والتوليد"]
         buttons = []
         for c in clinics:
-            buttons.append(ft.Button(
-                content=c,
+            buttons.append(ft.ElevatedButton(
+                text=c,
                 on_click=lambda e, name=c: show_booking_screen(name),
                 width=320, height=45,
                 bgcolor=ft.Colors.BLUE_50, color=ft.Colors.BLUE_900
             ))
 
         page.add(ft.Column([
-            ft.Text("اختر العيادة المطلوبة", size=20, weight=ft.FontWeight.BOLD),
+            ft.Text("اختر العيادة المطلوبة", size=20, weight=ft.FontWeight.BOLD, color=ft.Colors.BLUE_900),
             *buttons,
             ft.TextButton(content="تسجيل الخروج", on_click=show_login_screen, icon=ft.Icons.LOGOUT)
         ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=12))
@@ -175,4 +177,4 @@ def main(page: ft.Page):
 
 
 if __name__ == "__main__":
-    ft.run(main)
+    ft.app(target=main)
