@@ -1,32 +1,38 @@
-name: Build Flet App
+name: Build Flet Android APK
 
 on:
   push:
-    branches: [ main, master ]
-  pull_request:
     branches: [ main, master ]
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.10'
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
 
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install flet>=0.23.0
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
 
-    - name: Verify application syntax
-      run: |
-        python Main.py --version || true
-        echo "تم التحقق من سلامة الملفات بنجاح"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install flet
 
-          
+      - name: Build Flet APK
+        run: |
+          flet build apk --project kosti_hospital
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kosti-hospital-apk
+          path: build/apk/app-release.apk
