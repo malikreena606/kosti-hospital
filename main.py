@@ -84,20 +84,24 @@ MEDICINES_SEED = [
 
 # حسابات الموظفين الافتراضية - يُطلب تغيير كلمة السر عند أول دخول
 STAFF_SEED = [
-    ("reception", "موظف الاستقبال", "reception", "reception123"),
+    ("reception", "موظف الاستقبال / المدير", "reception", os.environ.get("KOSTI_ADMIN_PASS", "reception123")),
     ("lab", "فني المختبر", "lab", "lab12345"),
     ("pharmacy", "الصيدلي", "pharmacy", "pharmacy123"),
-    ("admin", "مدير النظام", "admin", os.environ.get("KOSTI_ADMIN_PASS", "admin123")),
 ]
 DOCTOR_DEFAULT_PASSWORD = "doctor123"
 
-ROLE_NAMES = {"patient": "مريض", "reception": "موظف استقبال", "doctor": "طبيب",
-              "lab": "فني مختبر", "pharmacy": "صيدلي", "admin": "مدير"}
+ROLE_NAMES = {"patient": "مريض", "reception": "موظف استقبال / مدير", "doctor": "طبيب",
+              "lab": "فني مختبر", "pharmacy": "صيدلي"}
 
 # حالات الدفع
 PAID, UNPAID, VERIFY = "تم الدفع", "لم يتم الدفع", "بانتظار التحقق"
 # حالات الحجز
 A_PENDING, A_OK, A_REJECT, A_CANCEL = "بانتظار التأكيد", "مؤكد", "مرفوض", "ملغي"
+# حالات طلب الدواء: المريض يطلب ← الصيدلي يقبل أو يرفض ← الدفع ← جاهز ← تسليم
+P_WAIT, P_OK, P_READY, P_DONE, P_REJECT, P_CANCEL = (
+    "بانتظار الرد", "مقبول", "جاهز للاستلام", "تم التسليم", "مرفوض", "ملغي")
+# حالات الفحص: طلب ← الدفع ← المختبر يستلم الفحص ← النتيجة
+L_WAIT, L_RECEIVED, L_DONE = "بانتظار الاستلام", "تم الاستلام", "جاهزة النتيجة"
 
 STATE = {"picker": None, "user": None}
 
@@ -231,7 +235,8 @@ def init_db():
         price INTEGER,
         requested_at TEXT,
         payment_status TEXT DEFAULT 'لم يتم الدفع',
-        status TEXT DEFAULT 'قيد الفحص',
+        status TEXT DEFAULT 'بانتظار الاستلام',
+        received_at TEXT,
         result TEXT,
         result_notes TEXT,
         result_at TEXT)""", commit=True)
@@ -247,7 +252,8 @@ def init_db():
         total INTEGER,
         created_at TEXT,
         payment_status TEXT DEFAULT 'لم يتم الدفع',
-        status TEXT DEFAULT 'قيد التجهيز')""", commit=True)
+        status TEXT DEFAULT 'بانتظار الرد',
+        staff_note TEXT)""", commit=True)
     db("""CREATE TABLE IF NOT EXISTS pharmacy_items (
         item_id INTEGER PRIMARY KEY AUTOINCREMENT,
         order_id INTEGER,
@@ -262,6 +268,13 @@ def init_db():
         message TEXT,
         status TEXT,
         created_at TEXT)""", commit=True)
+
+    # ترقية جداول المختبر والصيدلية من النسخ السابقة
+    ensure_column("pharmacy_orders", "staff_note", "TEXT")
+    ensure_column("lab_orders", "received_at", "TEXT")
+    db("UPDATE users SET role='reception' WHERE role='admin'", commit=True)   # المدير هو نفسه موظف الاستقبال
+    db("UPDATE pharmacy_orders SET status=? WHERE status='قيد التجهيز'", (P_OK,), commit=True)
+    db("UPDATE lab_orders SET status=? WHERE status='قيد الفحص'", (L_WAIT,), commit=True)
 
     # نقل الإيصالات القديمة (من النسخة السابقة) إلى جدول المدفوعات بحالة "بانتظار التحقق"
     legacy = db("""SELECT appointment_id FROM appointments WHERE receipt IS NOT NULL AND user_id IS NULL
@@ -498,6 +511,30 @@ def set_today_presence(doctor_id, present):
         db("INSERT OR IGNORE INTO doctor_absences (doctor_id, day) VALUES (?,?)", (doctor_id, today), commit=True)
 
 
+def get_doctor_of(user):
+    return db("SELECT * FROM doctors WHERE user_id=?", (user["user_id"],), fetch="one")
+
+
+def update_doctor_schedule(doctor_id, days_csv, hours):
+    """يعدّل أيام وساعات عمل الطبيب. يرجع (عدد الحجوزات المتأثرة، رسالة خطأ)."""
+    days = parse_days(days_csv)
+    if not days:
+        return None, "اختر يوم عمل واحداً على الأقل"
+    if not hours.strip():
+        return None, "اكتب ساعات العمل"
+    affected = 0
+    for a in db("""SELECT appointment_date FROM appointments WHERE doctor_id=? AND status IN (?,?)
+                   AND appointment_date>=?""", (doctor_id, A_PENDING, A_OK, date.today().isoformat()), fetch="all"):
+        try:
+            if datetime.strptime(a["appointment_date"], "%Y-%m-%d").date().weekday() not in days:
+                affected += 1
+        except ValueError:
+            pass
+    db("UPDATE doctors SET work_days=?, hours=? WHERE doctor_id=?",
+       (",".join(str(d) for d in days), hours.strip(), doctor_id), commit=True)
+    return affected, None
+
+
 def add_absence(doctor_id, date_text):
     try:
         day = datetime.strptime(date_text.strip(), "%Y-%m-%d").date()
@@ -584,10 +621,27 @@ def describe_item(kind, ref_id):
     return f"طلب أدوية رقم #{row['order_id']}"
 
 
+def payable(kind, ref_id):
+    """يرجع نص الخطأ إذا كان الدفع غير مسموح الآن، وإلا None."""
+    row = get_payment_row(kind, ref_id)
+    if not row:
+        return "العنصر غير موجود"
+    if kind == "appointment" and row["status"] not in (A_PENDING, A_OK):
+        return "هذا الحجز لم يعد متاحاً للدفع"
+    if kind == "pharmacy" and row["status"] == P_WAIT:
+        return "بانتظار قبول الصيدلي لطلبك قبل الدفع"
+    if kind == "pharmacy" and row["status"] not in (P_OK, P_READY):
+        return "هذا الطلب غير متاح للدفع"
+    return None
+
+
 def pay_electronically(kind, ref_id, user_id, bank, account, otp):
     row = get_payment_row(kind, ref_id)
     if not row:
         return False, "العنصر غير موجود"
+    why = payable(kind, ref_id)
+    if why:
+        return False, why
     if row["payment_status"] == PAID:
         return False, "تم دفعه مسبقاً"
     amount = get_amount(kind, ref_id)  # المبلغ يُقرأ من القاعدة وليس من الشاشة
@@ -603,6 +657,9 @@ def pay_electronically(kind, ref_id, user_id, bank, account, otp):
 
 
 def attach_receipt(kind, ref_id, user_id, data):
+    why = payable(kind, ref_id)
+    if why:
+        return why
     if get_payment_state(kind, ref_id) == PAID:
         return "تم دفعه مسبقاً"
     db("""INSERT INTO payments (kind, ref_id, user_id, amount, method, status, receipt, created_at)
@@ -648,16 +705,34 @@ def request_lab_test(user, test_id):
                                           t["price"], now()), fetch="id", commit=True)
 
 
+def receive_lab_order(order_id):
+    """رد المختبر: استلام الفحص وجاهزية استقبال المريض (يشترط الدفع)."""
+    o = db("SELECT * FROM lab_orders WHERE order_id=?", (order_id,), fetch="one")
+    if not o:
+        return "الطلب غير موجود"
+    if o["status"] != L_WAIT:
+        return "تم استلام هذا الفحص مسبقاً"
+    if o["payment_status"] != PAID:
+        return "استلم الدفع أولاً قبل استلام الفحص"
+    db("UPDATE lab_orders SET status=?, received_at=? WHERE order_id=?", (L_RECEIVED, now(), order_id), commit=True)
+    notify_patient(o["user_id"], f"تم استلام طلب فحص ({o['test_name']})، يرجى التوجه للمختبر لإعطاء العينة.")
+    return None
+
+
 def save_lab_result(order_id, result, notes):
     o = db("SELECT * FROM lab_orders WHERE order_id=?", (order_id,), fetch="one")
     if not o:
         return "الطلب غير موجود"
     if o["payment_status"] != PAID:
         return "لا يمكن إدخال النتيجة قبل الدفع"
+    if o["status"] == L_WAIT:
+        return "استلم الفحص أولاً قبل إدخال النتيجة"
+    if o["status"] == L_DONE:
+        return "تم إدخال نتيجة هذا الفحص مسبقاً"
     if not result.strip():
         return "اكتب النتيجة"
-    db("""UPDATE lab_orders SET result=?, result_notes=?, result_at=?, status='جاهزة النتيجة'
-          WHERE order_id=?""", (result.strip(), notes.strip() or None, now(), order_id), commit=True)
+    db("""UPDATE lab_orders SET result=?, result_notes=?, result_at=?, status=?
+          WHERE order_id=?""", (result.strip(), notes.strip() or None, now(), L_DONE, order_id), commit=True)
     notify_patient(o["user_id"], f"نتيجة فحص ({o['test_name']}) جاهزة، يمكنك الاطلاع عليها من التطبيق.")
     return None
 
@@ -679,8 +754,8 @@ def create_pharmacy_order(user, items):
             total += m["price"] * qty
         if not rows:
             raise ValueError("لم تحدد أي دواء")
-        cur = conn.execute("""INSERT INTO pharmacy_orders (user_id, patient_name, total, created_at)
-                              VALUES (?,?,?,?)""", (user["user_id"], user["full_name"], total, now()))
+        cur = conn.execute("""INSERT INTO pharmacy_orders (user_id, patient_name, total, created_at, status)
+                              VALUES (?,?,?,?,?)""", (user["user_id"], user["full_name"], total, now(), P_WAIT))
         oid = cur.lastrowid
         for m, qty in rows:
             conn.execute("INSERT INTO pharmacy_items (order_id, med_id, name, qty, unit_price) VALUES (?,?,?,?,?)",
@@ -695,28 +770,86 @@ def create_pharmacy_order(user, items):
         conn.close()
 
 
-def set_pharmacy_status(order_id, status):
+def _restore_stock(order_id):
+    for it in db("SELECT * FROM pharmacy_items WHERE order_id=?", (order_id,), fetch="all"):
+        db("UPDATE medicines SET stock = stock + ? WHERE med_id=?", (it["qty"], it["med_id"]), commit=True)
+
+
+def respond_pharmacy_order(order_id, accept, note):
+    """رد الصيدلي على الطلب: قبول أو رفض (الرفض يشترط سبباً ويعيد الكميات للمخزون)."""
     o = db("SELECT * FROM pharmacy_orders WHERE order_id=?", (order_id,), fetch="one")
     if not o:
         return "الطلب غير موجود"
-    if status in ("جاهز للاستلام", "تم التسليم") and o["payment_status"] != PAID:
-        return "استلم الدفع أولاً قبل تأكيد الجاهزية"
-    if o["status"] == "ملغي":
-        return "الطلب ملغي"
+    if o["status"] != P_WAIT:
+        return "تم الرد على هذا الطلب مسبقاً"
+    note = (note or "").strip()
+    if not accept and not note:
+        return "اكتب سبب الرفض ليظهر للمريض"
+    db("UPDATE pharmacy_orders SET status=?, staff_note=? WHERE order_id=?",
+       (P_OK if accept else P_REJECT, note or None, order_id), commit=True)
+    if accept:
+        text = f"تم قبول طلب الأدوية رقم #{order_id}. يمكنك الدفع من التطبيق ثم الاستلام من الصيدلية."
+        if note:
+            text += f" ملاحظة: {note}"
+    else:
+        _restore_stock(order_id)
+        text = f"نعتذر، تعذّر تجهيز طلب الأدوية رقم #{order_id}. السبب: {note}"
+    notify_patient(o["user_id"], text)
+    return None
+
+
+def set_pharmacy_status(order_id, status):
+    """تأكيد الجاهزية ثم التسليم (بعد القبول والدفع)."""
+    o = db("SELECT * FROM pharmacy_orders WHERE order_id=?", (order_id,), fetch="one")
+    if not o:
+        return "الطلب غير موجود"
+    if status == P_READY:
+        if o["status"] != P_OK:
+            return "يجب قبول الطلب أولاً"
+        if o["payment_status"] != PAID:
+            return "استلم الدفع أولاً قبل تأكيد الجاهزية"
+    elif status == P_DONE:
+        if o["status"] != P_READY:
+            return "أكّد جاهزية الطلب أولاً"
+    else:
+        return "حالة غير صالحة"
     db("UPDATE pharmacy_orders SET status=? WHERE order_id=?", (status, order_id), commit=True)
-    if status == "جاهز للاستلام":
+    if status == P_READY:
         notify_patient(o["user_id"], f"طلب الأدوية رقم #{order_id} جاهز للاستلام من الصيدلية.")
     return None
 
 
 def cancel_pharmacy_order(order_id):
+    """إلغاء طلب مقبول لم يُدفع بعد (يعيد الكميات للمخزون)."""
     o = db("SELECT * FROM pharmacy_orders WHERE order_id=?", (order_id,), fetch="one")
-    if not o or o["status"] in ("ملغي", "تم التسليم"):
+    if not o or o["status"] != P_OK:
         return "لا يمكن إلغاء هذا الطلب"
-    for it in db("SELECT * FROM pharmacy_items WHERE order_id=?", (order_id,), fetch="all"):
-        db("UPDATE medicines SET stock = stock + ? WHERE med_id=?", (it["qty"], it["med_id"]), commit=True)
-    db("UPDATE pharmacy_orders SET status='ملغي' WHERE order_id=?", (order_id,), commit=True)
+    if o["payment_status"] == PAID:
+        return "الطلب مدفوع، لا يمكن إلغاؤه من هنا"
+    _restore_stock(order_id)
+    db("UPDATE pharmacy_orders SET status=? WHERE order_id=?", (P_CANCEL, order_id), commit=True)
+    notify_patient(o["user_id"], f"تم إلغاء طلب الأدوية رقم #{order_id}.")
     return None
+
+
+def report_summary():
+    """أرقام التقارير للاستقبال والمدير."""
+    def pairs(sql, params=()):
+        return {r[0]: r[1] for r in db(sql, params, fetch="all")}
+
+    one = lambda sql, params=(): db(sql, params, fetch="one")[0]
+    return {
+        "appts_by_status": pairs("SELECT status, COUNT(*) FROM appointments GROUP BY status"),
+        "appts_by_clinic": pairs("SELECT clinic_name, COUNT(*) FROM appointments GROUP BY clinic_name"),
+        "appts_today": one("SELECT COUNT(*) FROM appointments WHERE appointment_date=? AND status IN (?,?)",
+                           (date.today().isoformat(), A_PENDING, A_OK)),
+        "revenue_total": one("SELECT COALESCE(SUM(amount),0) FROM payments WHERE status='تم'"),
+        "revenue_by_kind": pairs("SELECT kind, COALESCE(SUM(amount),0) FROM payments WHERE status='تم' GROUP BY kind"),
+        "revenue_by_method": pairs("SELECT method, COALESCE(SUM(amount),0) FROM payments WHERE status='تم' GROUP BY method"),
+        "lab_by_status": pairs("SELECT status, COUNT(*) FROM lab_orders GROUP BY status"),
+        "pharmacy_by_status": pairs("SELECT status, COUNT(*) FROM pharmacy_orders GROUP BY status"),
+        "sms_count": one("SELECT COUNT(*) FROM sms_log"),
+    }
 
 
 # ===============================================================
@@ -776,7 +909,7 @@ def card(controls, bg=ft.Colors.BLUE_50):
 
 
 def state_color(s):
-    if s in (PAID, A_OK, "جاهزة النتيجة", "جاهز للاستلام", "تم التسليم", "موجود"):
+    if s in (PAID, A_OK, L_DONE, L_RECEIVED, P_OK, P_READY, P_DONE, "موجود"):
         return ft.Colors.GREEN_700
     if s in (UNPAID, A_REJECT, A_CANCEL, "ملغي", "غير موجود"):
         return ft.Colors.RED_600
@@ -878,13 +1011,15 @@ def go_home(page):
     user = STATE["user"]
     if not user:
         return show_login(page)
-    {"patient": show_patient_home, "reception": show_reception_home, "doctor": show_doctor_home,
-     "lab": show_lab_home, "pharmacy": show_pharmacy_home, "admin": show_admin_home}[user["role"]](page)
+    {"patient": show_patient_home, "reception": show_admin_home, "doctor": show_doctor_home,
+     "lab": show_lab_home, "pharmacy": show_pharmacy_home}[user["role"]](page)
 
 
 def require(page, role):
+    """role: اسم دور واحد أو مجموعة أدوار مسموحة."""
     user = STATE["user"]
-    if not user or user["role"] != role:
+    allowed = (role,) if isinstance(role, str) else tuple(role)
+    if not user or user["role"] not in allowed:
         show_login(page)
         return False
     return True
@@ -923,6 +1058,7 @@ def show_home(page):
               primary("🔑 تسجيل الدخول", lambda e: show_login(page)),
               btn("➕ إنشاء حساب جديد", lambda e: show_register(page), ft.Colors.GREEN_100, ft.Colors.GREEN_900),
               btn("👁️ تصفح كزائر", lambda e: show_guest_home(page), ft.Colors.GREY_200, BLACK),
+              btn("👔 دخول الموظفين", lambda e: show_login(page, staff=True), ft.Colors.PURPLE_100, ft.Colors.PURPLE_900, 40),
               ft.Divider(),
               card([info("خدماتنا", 14, True),
                     info("🏥 4 عيادات وعدة أطباء في كل عيادة"),
@@ -945,9 +1081,9 @@ def show_guest_home(page):
               back_btn("← الرئيسية", lambda e: show_home(page)))
 
 
-def show_login(page):
+def show_login(page, staff=False):
     STATE["user"] = None
-    ident = field("الرقم الوطني أو اسم المستخدم")
+    ident = field("اسم المستخدم" if staff else "الرقم الوطني أو اسم المستخدم")
     pw = field("كلمة السر", password=True, can_reveal_password=True)
 
     def do_login(e):
@@ -961,17 +1097,19 @@ def show_login(page):
         else:
             go_home(page)
 
-    page_view(page,
-              ft.Container(height=15),
-              ft.Text(HOSPITAL_NAME, size=22, weight=ft.FontWeight.BOLD, color=ft.Colors.BLUE_900),
-              ft.Text("نظام الحجز الإلكتروني", size=14, color=ft.Colors.GREY_700),
-              ft.Container(height=10),
-              ident, pw,
-              primary("تسجيل الدخول", do_login),
-              ft.Divider(),
-              info("مريض جديد؟", 13),
-              btn("إنشاء حساب جديد", lambda e: show_register(page), ft.Colors.GREEN_100, ft.Colors.GREEN_900),
-              back_btn("← الرئيسية", lambda e: show_home(page)))
+    controls = [ft.Container(height=15),
+                ft.Text(HOSPITAL_NAME, size=22, weight=ft.FontWeight.BOLD, color=ft.Colors.BLUE_900),
+                ft.Text("دخول الموظفين" if staff else "نظام الحجز الإلكتروني", size=14, color=ft.Colors.GREY_700),
+                ft.Container(height=10)]
+    if staff:
+        controls.append(info("للاستقبال والأطباء والمختبر والصيدلية والإدارة: استخدم اسم المستخدم الذي أعطتك إياه الإدارة.",
+                             12, False, ft.Colors.GREY_700))
+    controls += [ident, pw, primary("تسجيل الدخول", do_login)]
+    if not staff:
+        controls += [ft.Divider(), info("مريض جديد؟", 13),
+                     btn("إنشاء حساب جديد", lambda e: show_register(page), ft.Colors.GREEN_100, ft.Colors.GREEN_900)]
+    controls.append(back_btn("← الرئيسية", lambda e: show_home(page)))
+    page_view(page, *controls)
 
 
 def show_register(page):
@@ -1114,6 +1252,11 @@ def show_payment(page, kind, ref_id, back):
     if get_payment_state(kind, ref_id) == PAID:
         back()
         return
+    why = payable(kind, ref_id)
+    if why:
+        back()
+        err_snack(page, why)
+        return
     amount = get_amount(kind, ref_id)
     receipt = {"data": None}
     status = info("لم يتم إرفاق صورة", 12, False, ft.Colors.RED_600)
@@ -1238,6 +1381,8 @@ def show_my_lab(page):
     for o in rows:
         items = [info(f"فحص #{o['order_id']}: {o['test_name']}", 13, True), info(f"📅 {o['requested_at']}"),
                  badge("💳 الدفع", o["payment_status"]), badge("الحالة", o["status"])]
+        if o["status"] == L_RECEIVED:
+            items.append(info("✅ استلم المختبر طلبك، توجه للمختبر لإعطاء العينة.", 12, True, ft.Colors.GREEN_700))
         if o["result"]:
             items.append(info(f"النتيجة: {o['result']}", 14, True, ft.Colors.BLUE_900))
             if o["result_notes"]:
@@ -1280,11 +1425,13 @@ def show_pharmacy_catalog(page):
         except ValueError as ex:
             err_snack(page, str(ex))
             return
-        show_payment(page, "pharmacy", oid, lambda: show_my_pharmacy(page))
+        show_my_pharmacy(page)
+        ok_snack(page, f"تم إرسال طلبك رقم #{oid} للصيدلي، سيصلك رد بالقبول أو الرفض ثم تدفع")
 
     body = rows or [info("لا توجد أدوية متوفرة حالياً", 13, False, ft.Colors.GREY_600)]
     page_view(page, h1("💊 صيدلية المستشفى"), *body,
-              success("إنشاء الطلب والمتابعة للدفع", submit, 50),
+              info("بعد إرسال الطلب يردّ الصيدلي بالقبول أو الرفض، وبعد القبول تدفع وتستلم دواءك.", 11, False, ft.Colors.GREY_700),
+              success("إرسال الطلب للصيدلي", submit, 50),
               back_btn("← الرئيسية", lambda e: go_home(page)), spacing=10)
 
 
@@ -1300,9 +1447,13 @@ def show_my_pharmacy(page):
         items += [info(f"• {i['name']} × {i['qty']}") for i in its]
         items += [info(f"الإجمالي: {money(o['total'])}", 12, True), badge("💳 الدفع", o["payment_status"]),
                   badge("الحالة", o["status"])]
-        if o["status"] == "جاهز للاستلام":
+        if o["staff_note"]:
+            items.append(info(f"💬 ملاحظة الصيدلي: {o['staff_note']}", 12, True, ft.Colors.PURPLE_800))
+        if o["status"] == P_WAIT:
+            items.append(info("⏳ بانتظار رد الصيدلي على طلبك.", 12, True, ft.Colors.ORANGE_800))
+        if o["status"] == P_READY:
             items.append(info("✅ طلبك جاهز، تفضل بالاستلام من الصيدلية.", 12, True, ft.Colors.GREEN_700))
-        if o["payment_status"] != PAID and o["status"] != "ملغي":
+        if o["status"] == P_OK and o["payment_status"] != PAID:
             items.append(success("💳 ادفع الآن", lambda e, i=o["order_id"]: show_payment(
                 page, "pharmacy", i, lambda: show_my_pharmacy(page)), 38))
         cards.append(card(items))
@@ -1313,13 +1464,18 @@ def show_my_pharmacy(page):
 # 10) موظف الاستقبال
 # ===============================================================
 def show_reception_home(page, only_pending=True):
+    show_admin_home(page)
+
+
+def show_bookings(page, only_pending=True):
+    """مراجعة الحجوزات وتأكيدها أو رفضها (موظف الاستقبال هو نفسه المدير)."""
     if not require(page, "reception"):
         return
     where = "WHERE a.status=?" if only_pending else "WHERE ?"
     rows = db(f"""SELECT a.*, u.phone FROM appointments a LEFT JOIN users u ON a.user_id=u.user_id
                   {where} ORDER BY a.appointment_id DESC LIMIT 100""",
               (A_PENDING if only_pending else 1,), fetch="all")
-    refresh = lambda: show_reception_home(page, only_pending)
+    refresh = lambda: show_bookings(page, only_pending)
 
     def review(aid, approve):
         def submit(note):
@@ -1343,14 +1499,16 @@ def show_reception_home(page, only_pending=True):
             items.append(ft.Row([success("✅ تأكيد الحجز", lambda e, i=a["appointment_id"]: review(i, True), 40),
                                  danger("❌ رفض", lambda e, i=a["appointment_id"]: review(i, False), 40)], spacing=8))
         cards.append(card(items))
-    page_view(page, header(page, "لوحة الاستقبال"), h1("الحجوزات"),
-              ft.Row([btn("بانتظار التأكيد", lambda e: show_reception_home(page, True),
+    nav = [btn("📊 التقارير", lambda e: show_reports(page), ft.Colors.PURPLE_100, ft.Colors.PURPLE_900),
+           back_btn("← الرئيسية", lambda e: show_admin_home(page))]
+    page_view(page, header(page, "إدارة الحجوزات"), h1("الحجوزات"),
+              ft.Row([btn("بانتظار التأكيد", lambda e: show_bookings(page, True),
                           ft.Colors.BLUE_600 if only_pending else ft.Colors.GREY_200,
                           ft.Colors.WHITE if only_pending else BLACK, 38),
-                      btn("كل الحجوزات", lambda e: show_reception_home(page, False),
+                      btn("كل الحجوزات", lambda e: show_bookings(page, False),
                           ft.Colors.GREY_200 if only_pending else ft.Colors.BLUE_600,
                           BLACK if only_pending else ft.Colors.WHITE, 38)], spacing=8),
-              *cards, footer(page), spacing=10)
+              *cards, *nav, spacing=10)
 
 
 # ===============================================================
@@ -1360,7 +1518,7 @@ def show_doctor_home(page):
     if not require(page, "doctor"):
         return
     user = STATE["user"]
-    d = db("SELECT * FROM doctors WHERE user_id=?", (user["user_id"],), fetch="one")
+    d = get_doctor_of(user)
     if not d:
         err_snack(page, "حسابك غير مرتبط بطبيب")
         return logout(page)
@@ -1405,6 +1563,8 @@ def show_doctor_home(page):
 
     controls = [header(page, f"{d['clinic']} — {d['specialty']}"), h1("جدول العمل"),
                 card([info(f"أيام العمل: {days_text(d['work_days'])} — {d['hours']}"), badge(status_text, status_val)])]
+    controls.append(btn("✏️ تعديل أيام وساعات العمل", lambda e: show_doctor_schedule(page),
+                        ft.Colors.BLUE_50, ft.Colors.BLUE_900))
     if works_today:
         controls.append(btn("❌ تسجيل: غير موجود اليوم" if present else "✅ تسجيل: موجود اليوم", toggle,
                             ft.Colors.RED_100 if present else ft.Colors.GREEN_100,
@@ -1415,6 +1575,33 @@ def show_doctor_home(page):
     page_view(page, *controls, spacing=10)
 
 
+def show_doctor_schedule(page):
+    if not require(page, "doctor"):
+        return
+    d = get_doctor_of(STATE["user"])
+    boxes = {day: ft.Checkbox(label=DAY_NAMES[day], value=day in parse_days(d["work_days"])) for day in WEEK_ORDER}
+    hours = field("ساعات العمل (مثال: 8 ص - 2 م)", value=d["hours"])
+
+    def save(e):
+        days = ",".join(str(day) for day, c in boxes.items() if c.value)
+        affected, err = update_doctor_schedule(d["doctor_id"], days, hours.value or "")
+        if err:
+            err_snack(page, err)
+            return
+        show_doctor_home(page)
+        if affected:
+            show_snack(page, f"⚠️ تم الحفظ. لديك {affected} حجز في أيام ألغيتها، تواصل مع الاستقبال لتعديلها.",
+                       ft.Colors.ORANGE_700)
+        else:
+            ok_snack(page, "تم تعديل جدول العمل، سيظهر للمرضى فوراً")
+
+    page_view(page, h1("✏️ تعديل جدول العمل"),
+              info("حدّد الأيام التي تعمل فيها وساعات العمل. ينعكس التعديل على الحجز مباشرة.", 12, False, ft.Colors.GREY_700),
+              ft.Wrap(list(boxes.values()), spacing=8), hours,
+              success("حفظ الجدول", save, 50),
+              back_btn("← رجوع", lambda e: show_doctor_home(page)))
+
+
 # ===============================================================
 # 12) فني المختبر
 # ===============================================================
@@ -1423,8 +1610,13 @@ def show_lab_home(page, only_open=True):
         return
     rows = db("SELECT * FROM lab_orders WHERE status!=? ORDER BY order_id DESC LIMIT 100" if only_open
               else "SELECT * FROM lab_orders WHERE ? ORDER BY order_id DESC LIMIT 100",
-              ("جاهزة النتيجة" if only_open else 1,), fetch="all")
+              (L_DONE if only_open else 1,), fetch="all")
     refresh = lambda: show_lab_home(page, only_open)
+
+    def receive(oid):
+        err = receive_lab_order(oid)
+        refresh()
+        err_snack(page, err) if err else ok_snack(page, "تم استلام الفحص وإبلاغ المريض")
 
     def enter_result(oid):
         result = ft.TextField(label="النتيجة (مثال: سلبي / إيجابي)", color=BLACK)
@@ -1454,11 +1646,13 @@ def show_lab_home(page, only_open=True):
         if o["result"]:
             items.append(info(f"النتيجة: {o['result']}", 13, True, ft.Colors.BLUE_900))
         items += payment_staff_controls(page, "lab", o["order_id"], refresh)
-        if o["payment_status"] == PAID and o["status"] != "جاهزة النتيجة":
+        if o["payment_status"] == PAID and o["status"] == L_WAIT:
+            items.append(success("📥 استلام الفحص (جاهز لاستقبال المريض)", lambda e, i=o["order_id"]: receive(i)))
+        if o["payment_status"] == PAID and o["status"] == L_RECEIVED:
             items.append(primary("📝 إدخال النتيجة", lambda e, i=o["order_id"]: enter_result(i)))
         cards.append(card(items))
     page_view(page, header(page, "المختبر"), h1("طلبات الفحوصات"),
-              ft.Row([btn("قيد الفحص", lambda e: show_lab_home(page, True),
+              ft.Row([btn("الطلبات المفتوحة", lambda e: show_lab_home(page, True),
                           ft.Colors.BLUE_600 if only_open else ft.Colors.GREY_200, ft.Colors.WHITE if only_open else BLACK, 38),
                       btn("الكل", lambda e: show_lab_home(page, False),
                           ft.Colors.GREY_200 if only_open else ft.Colors.BLUE_600, BLACK if only_open else ft.Colors.WHITE, 38)],
@@ -1472,9 +1666,19 @@ def show_lab_home(page, only_open=True):
 def show_pharmacy_home(page, only_open=True):
     if not require(page, "pharmacy"):
         return
-    rows = db("SELECT * FROM pharmacy_orders WHERE status IN ('قيد التجهيز','جاهز للاستلام') ORDER BY order_id DESC LIMIT 100"
-              if only_open else "SELECT * FROM pharmacy_orders ORDER BY order_id DESC LIMIT 100", (), fetch="all")
+    rows = db("SELECT * FROM pharmacy_orders WHERE status IN (?,?,?) ORDER BY order_id DESC LIMIT 100",
+              (P_WAIT, P_OK, P_READY), fetch="all") if only_open \
+        else db("SELECT * FROM pharmacy_orders ORDER BY order_id DESC LIMIT 100", (), fetch="all")
     refresh = lambda: show_pharmacy_home(page, only_open)
+
+    def respond(oid, accept):
+        def submit(note):
+            err = respond_pharmacy_order(oid, accept, note)
+            refresh()
+            err_snack(page, err) if err else ok_snack(
+                page, "تم قبول الطلب وإبلاغ المريض" if accept else "تم رفض الطلب وإرجاع الكميات للمخزون")
+        ask_note(page, "قبول الطلب" if accept else "رفض الطلب", submit, required=not accept,
+                 label="ملاحظة للمريض (اختياري)" if accept else "سبب الرفض (إلزامي)")
 
     def set_status(oid, status):
         err = set_pharmacy_status(oid, status)
@@ -1493,13 +1697,19 @@ def show_pharmacy_home(page, only_open=True):
         items += [info(f"• {i['name']} × {i['qty']}") for i in its]
         items += [info(f"الإجمالي: {money(o['total'])}", 12, True), badge("💳 الدفع", o["payment_status"]),
                   badge("الحالة", o["status"])]
-        if o["status"] not in ("ملغي", "تم التسليم"):
+        if o["staff_note"]:
+            items.append(info(f"💬 {o['staff_note']}", 12, False, ft.Colors.PURPLE_800))
+        if o["status"] == P_WAIT:
+            items.append(ft.Row([success("✅ قبول الطلب", lambda e, i=o["order_id"]: respond(i, True), 40),
+                                 danger("❌ رفض", lambda e, i=o["order_id"]: respond(i, False), 40)], spacing=8))
+        if o["status"] in (P_OK, P_READY):
             items += payment_staff_controls(page, "pharmacy", o["order_id"], refresh)
-            if o["status"] == "قيد التجهيز":
-                items.append(success("📦 تأكيد جاهزية الطلب", lambda e, i=o["order_id"]: set_status(i, "جاهز للاستلام"), 40))
-            if o["status"] == "جاهز للاستلام":
-                items.append(primary("🤝 تم تسليم الطلب", lambda e, i=o["order_id"]: set_status(i, "تم التسليم")))
-            items.append(danger("إلغاء الطلب", lambda e, i=o["order_id"]: cancel(i), 36))
+        if o["status"] == P_OK:
+            items.append(success("📦 تأكيد جاهزية الطلب", lambda e, i=o["order_id"]: set_status(i, P_READY), 40))
+            if o["payment_status"] != PAID:
+                items.append(danger("إلغاء الطلب", lambda e, i=o["order_id"]: cancel(i), 36))
+        if o["status"] == P_READY:
+            items.append(primary("🤝 تم تسليم الطلب", lambda e, i=o["order_id"]: set_status(i, P_DONE)))
         cards.append(card(items))
     page_view(page, header(page, "الصيدلية"), h1("طلبات الأدوية"),
               ft.Row([btn("الطلبات المفتوحة", lambda e: show_pharmacy_home(page, True),
@@ -1564,7 +1774,7 @@ def show_pharmacy_stock(page):
 # 14) المدير
 # ===============================================================
 def show_admin_home(page):
-    if not require(page, "admin"):
+    if not require(page, "reception"):
         return
     def count(sql, params=()):
         return db(sql, params, fetch="one")[0]
@@ -1574,21 +1784,44 @@ def show_admin_home(page):
     total_appts = count("SELECT COUNT(*) FROM appointments")
     pending = count("SELECT COUNT(*) FROM appointments WHERE status=?", (A_PENDING,))
     revenue = count("SELECT COALESCE(SUM(amount),0) FROM payments WHERE status='تم'")
-    page_view(page, header(page, "لوحة الإدارة"), h1("نظرة عامة", ft.Colors.PURPLE_800),
+    page_view(page, header(page, "لوحة الاستقبال والإدارة"), h1("نظرة عامة", ft.Colors.PURPLE_800),
               card([info(f"المرضى المسجلون: {patients}"),
                     info(f"الأطباء: {doctors}"),
                     info(f"الحجوزات: {total_appts} (بانتظار التأكيد: {pending})"),
                     info(f"إجمالي المدفوعات المؤكدة: {money(revenue)}", 13, True, ft.Colors.GREEN_700)],
                    ft.Colors.PURPLE_50),
-              btn("📊 التقارير", lambda e: show_admin_reports(page), ft.Colors.PURPLE_100, ft.Colors.PURPLE_900),
+              btn(f"📋 الحجوزات (مراجعة وتأكيد) — بانتظارك: {pending}", lambda e: show_bookings(page),
+                  ft.Colors.BLUE_100, ft.Colors.BLUE_900),
+              btn("📊 التقارير", lambda e: show_reports(page), ft.Colors.PURPLE_100, ft.Colors.PURPLE_900),
               btn("➕ إضافة طبيب", lambda e: show_admin_add_doctor(page), ft.Colors.BLUE_50, ft.Colors.BLUE_900),
               btn("➕ إضافة موظف", lambda e: show_admin_add_staff(page), ft.Colors.BLUE_50, ft.Colors.BLUE_900),
               footer(page))
 
 
 def show_admin_reports(page):
-    if not require(page, "admin"):
+    show_reports(page)
+
+
+def show_reports(page):
+    """التقارير (موظف الاستقبال هو نفسه المدير)."""
+    if not require(page, "reception"):
         return
+    sm = report_summary()
+    kind_names0 = {"appointment": "الحجوزات", "lab": "الفحوصات", "pharmacy": "الأدوية"}
+    method_names0 = {"electronic": "إلكتروني", "receipt": "إيصال", "cash": "نقداً"}
+    fmt = lambda d, names=None: [info(f"• {(names or {}).get(k, k)}: {v}") for k, v in d.items()] or [info("—")]
+    fmt_money = lambda d, names: [info(f"• {names.get(k, k)}: {money(v)}") for k, v in d.items()] or [info("—")]
+    summary = [
+        card([info("📌 نظرة سريعة", 14, True), info(f"حجوزات اليوم (معلّقة + مؤكدة): {sm['appts_today']}"),
+              info(f"إجمالي المدفوعات المؤكدة: {money(sm['revenue_total'])}", 13, True, ft.Colors.GREEN_700),
+              info(f"عدد الرسائل النصية: {sm['sms_count']}")], ft.Colors.PURPLE_50),
+        card([info("الحجوزات حسب الحالة", 13, True), *fmt(sm["appts_by_status"])]),
+        card([info("الحجوزات حسب العيادة", 13, True), *fmt(sm["appts_by_clinic"])]),
+        card([info("المدفوعات حسب النوع", 13, True), *fmt_money(sm["revenue_by_kind"], kind_names0),
+              info("حسب طريقة الدفع", 13, True), *fmt_money(sm["revenue_by_method"], method_names0)]),
+        card([info("الفحوصات المخبرية حسب الحالة", 13, True), *fmt(sm["lab_by_status"])]),
+        card([info("طلبات الأدوية حسب الحالة", 13, True), *fmt(sm["pharmacy_by_status"])]),
+    ]
     appts = db("SELECT * FROM appointments ORDER BY appointment_id DESC LIMIT 100", (), fetch="all")
     pays = db("SELECT * FROM payments ORDER BY payment_id DESC LIMIT 100", (), fetch="all")
     kind_names = {"appointment": "حجز", "lab": "فحص", "pharmacy": "أدوية"}
@@ -1615,14 +1848,16 @@ def show_admin_reports(page):
                       rows=[ft.DataRow(cells=[cell(s["phone"]), cell(s["message"]), cell(s["status"]), cell(s["created_at"])])
                             for s in sms],
                       heading_row_color=ft.Colors.PURPLE_600)
-    page_view(page, h1(f"📊 الحجوزات ({len(appts)})", ft.Colors.PURPLE_800), ft.Row([t1], scroll=ft.ScrollMode.AUTO),
+    back = back_btn("← الرئيسية", lambda e: show_admin_home(page))
+    page_view(page, h1("📊 التقارير", ft.Colors.PURPLE_800), *summary,
+              h1(f"📋 الحجوزات ({len(appts)})", ft.Colors.PURPLE_800), ft.Row([t1], scroll=ft.ScrollMode.AUTO),
               h1(f"💳 المدفوعات ({len(pays)})", ft.Colors.PURPLE_800), ft.Row([t2], scroll=ft.ScrollMode.AUTO),
               h1(f"✉️ الرسائل النصية ({len(sms)})", ft.Colors.PURPLE_800), ft.Row([t3], scroll=ft.ScrollMode.AUTO),
-              back_btn("← رجوع", lambda e: show_admin_home(page)))
+              back)
 
 
 def show_admin_add_doctor(page):
-    if not require(page, "admin"):
+    if not require(page, "reception"):
         return
     name = field("اسم الطبيب (بدون لقب)")
     clinic = make_dropdown("العيادة", CLINICS)
@@ -1655,9 +1890,9 @@ def show_admin_add_doctor(page):
 
 
 def show_admin_add_staff(page):
-    if not require(page, "admin"):
+    if not require(page, "reception"):
         return
-    roles = {"موظف استقبال": "reception", "فني مختبر": "lab", "صيدلي": "pharmacy", "مدير": "admin"}
+    roles = {"موظف استقبال / مدير": "reception", "فني مختبر": "lab", "صيدلي": "pharmacy"}
     role = make_dropdown("الوظيفة", list(roles))
     full_name = field("الاسم الكامل")
     username = field("اسم المستخدم (بالإنجليزية)")
