@@ -17,10 +17,21 @@ import flet as ft
 # ===============================================================
 # 1) الإعدادات العامة
 # ===============================================================
-if os.environ.get("FLET_APP_STORAGE_DATA"):
-    DB_PATH = os.path.join(os.environ["FLET_APP_STORAGE_DATA"], "kosti_hospital.db")
-else:
-    DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "kosti_hospital.db")
+def _default_db_path():
+    folder = os.environ.get("FLET_APP_STORAGE_DATA") or os.path.dirname(os.path.abspath(__file__))
+    try:
+        os.makedirs(folder, exist_ok=True)   # على الهاتف قد لا يكون المجلد موجوداً في أول تشغيل
+        probe = os.path.join(folder, ".write_test")
+        with open(probe, "w") as fh:
+            fh.write("ok")
+        os.remove(probe)
+    except Exception:
+        import tempfile
+        folder = tempfile.gettempdir()      # مكان بديل قابل للكتابة
+    return os.path.join(folder, "kosti_hospital.db")
+
+
+DB_PATH = _default_db_path()
 
 APPOINTMENT_FEE = 10_000      # سعر تذكرة الموعد (جنيه)
 LAB_TEST_PRICE = 10_000       # سعر الفحص المخبري (جنيه)
@@ -1680,10 +1691,21 @@ def main(page: ft.Page):
     page.horizontal_alignment = ft.CrossAxisAlignment.CENTER
     page.bgcolor = ft.Colors.WHITE
 
-    init_db()
-    STATE["picker"] = ft.FilePicker()
-    page.services.append(STATE["picker"])
-    show_home(page)
+    # شاشة تحميل أولاً، وأي خطأ في البداية يظهر نصه على الشاشة بدل الشاشة السوداء
+    page.add(ft.Text("جاري التحميل...", size=16, color=ft.Colors.BLUE_900))
+    page.update()
+    try:
+        init_db()
+        STATE["picker"] = ft.FilePicker()
+        page.services.append(STATE["picker"])
+        show_home(page)
+    except Exception:
+        import traceback
+        page.clean()
+        page.add(ft.Text("حدث خطأ أثناء التشغيل، صوّري هذه الشاشة وأرسليها:", size=14,
+                         color=ft.Colors.RED_700, weight=ft.FontWeight.BOLD),
+                 ft.Text(traceback.format_exc(), size=11, color=ft.Colors.BLACK, selectable=True))
+        page.update()
 
 
 if __name__ == "__main__":
