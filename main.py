@@ -872,8 +872,91 @@ def err_snack(page, text):
     show_snack(page, "⚠️ " + text, ft.Colors.RED_600)
 
 
+def guarded(fn):
+    """يحمي معالج الضغط: أي خطأ غير متوقع يظهر نصه في نافذة بدل أن يتجاهله التطبيق."""
+    import asyncio
+
+    def report(ex):
+        import traceback
+        page = STATE.get("page")
+        if STATE.get("debug") or page is None:
+            raise ex
+        page.show_dialog(ft.AlertDialog(
+            title=ft.Text("حدث خطأ، صوّري هذه النافذة وأرسليها", size=15),
+            content=ft.Container(content=ft.Text(traceback.format_exc(), size=11, selectable=True), width=320, height=300),
+            actions=[ft.TextButton(content="إغلاق", on_click=lambda e: page.pop_dialog())]))
+
+    if asyncio.iscoroutinefunction(fn):
+        async def run_async(*a, **k):
+            try:
+                return await fn(*a, **k)
+            except Exception as ex:
+                report(ex)
+        return run_async
+
+    def run(*a, **k):
+        try:
+            return fn(*a, **k)
+        except Exception as ex:
+            report(ex)
+    return run
+
+
 def btn(text, on_click, bgcolor, color, height=45):
-    return ft.Button(content=text, on_click=on_click, expand=True, height=height, bgcolor=bgcolor, color=color)
+    return ft.Button(content=text, on_click=guarded(on_click), expand=True, height=height, bgcolor=bgcolor, color=color)
+
+
+def choice_group(page, options, value=None):
+    """اختيار واحد من عدة خيارات بأزرار. الحالة محفوظة في بايثون فلا تعتمد على مزامنة القوائم المنسدلة.
+    يرجع (العنصر، دالة تُرجع القيمة المختارة)."""
+    state = {"value": value}
+    buttons = {}
+
+    def restyle():
+        for opt, b in buttons.items():
+            sel = state["value"] == opt
+            b.bgcolor = ft.Colors.BLUE_600 if sel else ft.Colors.GREY_200
+            b.color = ft.Colors.WHITE if sel else BLACK
+            b.content = ("✓ " if sel else "") + opt
+
+    def make(opt):
+        def click(e):
+            state["value"] = opt
+            restyle()
+            page.update()
+        b = ft.Button(content=opt, on_click=click, expand=True, height=42)
+        buttons[opt] = b
+        return b
+
+    col = ft.Column([make(o) for o in options], spacing=6)
+    restyle()
+    return col, (lambda: state["value"])
+
+
+def day_toggles(page, selected):
+    """أزرار أيام الأسبوع: الضغط يختار اليوم أو يلغيه. يرجع (العنصر، دالة تُرجع أرقام الأيام المختارة)."""
+    state = set(selected)
+    buttons = {}
+
+    def restyle():
+        for day, b in buttons.items():
+            sel = day in state
+            b.bgcolor = ft.Colors.GREEN_600 if sel else ft.Colors.GREY_200
+            b.color = ft.Colors.WHITE if sel else BLACK
+            b.content = ("✓ " if sel else "") + DAY_NAMES[day]
+
+    def make(day):
+        def click(e):
+            state.symmetric_difference_update({day})
+            restyle()
+            page.update()
+        b = ft.Button(content=DAY_NAMES[day], on_click=click, height=40)
+        buttons[day] = b
+        return b
+
+    row = ft.Row([make(d) for d in WEEK_ORDER], wrap=True, spacing=6, run_spacing=6)
+    restyle()
+    return row, (lambda: [d for d in WEEK_ORDER if d in state])
 
 
 def primary(text, on_click):
@@ -925,11 +1008,6 @@ def page_view(page, *controls, spacing=12):
     page.add(ft.Column([ft.Container(height=15), *controls], spacing=spacing,
                        horizontal_alignment=ft.CrossAxisAlignment.STRETCH))
     page.update()
-
-
-def make_dropdown(label, options, value=None):
-    opt = getattr(ft, "DropdownOption", None) or ft.dropdown.Option
-    return ft.Dropdown(label=label, options=[opt(key=o, text=o) for o in options], value=value, color=BLACK)
 
 
 def ask_note(page, title, on_submit, required=False, label="ملاحظة للمريض"):
@@ -1306,12 +1384,12 @@ def show_payment(page, kind, ref_id, back):
 def show_electronic_payment(page, kind, ref_id, back):
     user = STATE["user"]
     amount = get_amount(kind, ref_id)
-    bank = make_dropdown("البنك", BANKS)
+    bank_group, get_bank = choice_group(page, BANKS)
     account = field("رقم الحساب أو رقم الهاتف المرتبط بالمحفظة", keyboard_type=ft.KeyboardType.NUMBER, max_length=16)
     otp = field("رمز التحقق (التجريبي: 123456)", keyboard_type=ft.KeyboardType.NUMBER, max_length=6)
 
     def pay(e):
-        ok, msg = pay_electronically(kind, ref_id, user["user_id"], bank.value or "", account.value or "", otp.value or "")
+        ok, msg = pay_electronically(kind, ref_id, user["user_id"], get_bank() or "", account.value or "", otp.value or "")
         if not ok:
             err_snack(page, msg)
             return
@@ -1321,7 +1399,7 @@ def show_electronic_payment(page, kind, ref_id, back):
     page_view(page, h1("الدفع الإلكتروني"),
               card([info(describe_item(kind, ref_id), 13, True), info(f"المبلغ: {money(amount)}", 14, True, ft.Colors.RED_700)]),
               info("⚠️ البوابة الحالية تجريبية ولا تحرّك أموالاً حقيقية.", 11, True, ft.Colors.ORANGE_800),
-              bank, account, otp,
+              info("اختر البنك:", 13, True), bank_group, account, otp,
               success(f"دفع {money(amount)}", pay, 50),
               back_btn("← رجوع", lambda e: show_payment(page, kind, ref_id, back)))
 
@@ -1563,8 +1641,6 @@ def show_doctor_home(page):
 
     controls = [header(page, f"{d['clinic']} — {d['specialty']}"), h1("جدول العمل"),
                 card([info(f"أيام العمل: {days_text(d['work_days'])} — {d['hours']}"), badge(status_text, status_val)])]
-    controls.append(btn("✏️ تعديل أيام وساعات العمل", lambda e: show_doctor_schedule(page),
-                        ft.Colors.BLUE_50, ft.Colors.BLUE_900))
     if works_today:
         controls.append(btn("❌ تسجيل: غير موجود اليوم" if present else "✅ تسجيل: موجود اليوم", toggle,
                             ft.Colors.RED_100 if present else ft.Colors.GREEN_100,
@@ -1573,33 +1649,6 @@ def show_doctor_home(page):
                  btn("إضافة يوم غياب", add_abs, ft.Colors.ORANGE_100, ft.Colors.ORANGE_900, 40),
                  ft.Divider(), h1("حجوزاتي المؤكدة القادمة"), *appt_cards, footer(page)]
     page_view(page, *controls, spacing=10)
-
-
-def show_doctor_schedule(page):
-    if not require(page, "doctor"):
-        return
-    d = get_doctor_of(STATE["user"])
-    boxes = {day: ft.Checkbox(label=DAY_NAMES[day], value=day in parse_days(d["work_days"])) for day in WEEK_ORDER}
-    hours = field("ساعات العمل (مثال: 8 ص - 2 م)", value=d["hours"])
-
-    def save(e):
-        days = ",".join(str(day) for day, c in boxes.items() if c.value)
-        affected, err = update_doctor_schedule(d["doctor_id"], days, hours.value or "")
-        if err:
-            err_snack(page, err)
-            return
-        show_doctor_home(page)
-        if affected:
-            show_snack(page, f"⚠️ تم الحفظ. لديك {affected} حجز في أيام ألغيتها، تواصل مع الاستقبال لتعديلها.",
-                       ft.Colors.ORANGE_700)
-        else:
-            ok_snack(page, "تم تعديل جدول العمل، سيظهر للمرضى فوراً")
-
-    page_view(page, h1("✏️ تعديل جدول العمل"),
-              info("حدّد الأيام التي تعمل فيها وساعات العمل. ينعكس التعديل على الحجز مباشرة.", 12, False, ft.Colors.GREY_700),
-              ft.Wrap(list(boxes.values()), spacing=8), hours,
-              success("حفظ الجدول", save, 50),
-              back_btn("← رجوع", lambda e: show_doctor_home(page)))
 
 
 # ===============================================================
@@ -1793,8 +1842,6 @@ def show_admin_home(page):
               btn(f"📋 الحجوزات (مراجعة وتأكيد) — بانتظارك: {pending}", lambda e: show_bookings(page),
                   ft.Colors.BLUE_100, ft.Colors.BLUE_900),
               btn("📊 التقارير", lambda e: show_reports(page), ft.Colors.PURPLE_100, ft.Colors.PURPLE_900),
-              btn("➕ إضافة طبيب", lambda e: show_admin_add_doctor(page), ft.Colors.BLUE_50, ft.Colors.BLUE_900),
-              btn("➕ إضافة موظف", lambda e: show_admin_add_staff(page), ft.Colors.BLUE_50, ft.Colors.BLUE_900),
               footer(page))
 
 
@@ -1856,68 +1903,6 @@ def show_reports(page):
               back)
 
 
-def show_admin_add_doctor(page):
-    if not require(page, "reception"):
-        return
-    name = field("اسم الطبيب (بدون لقب)")
-    clinic = make_dropdown("العيادة", CLINICS)
-    spec = field("التخصص")
-    hours = field("ساعات العمل (مثال: 8 ص - 2 م)")
-    day_boxes = {d: ft.Checkbox(label=DAY_NAMES[d], value=d in parse_days(SUN_THU)) for d in WEEK_ORDER}
-    username = field("اسم المستخدم للدخول (بالإنجليزية)")
-    password = field("كلمة سر مؤقتة", password=True, can_reveal_password=True)
-
-    def save(e):
-        days = ",".join(str(d) for d, c in day_boxes.items() if c.value)
-        n, u, p = (name.value or "").strip(), (username.value or "").strip(), password.value or ""
-        if not (n and clinic.value and (spec.value or "").strip() and (hours.value or "").strip() and days and u):
-            err_snack(page, "أكمل جميع الحقول واختر يوم عمل واحداً على الأقل")
-            return
-        if len(p) < 6:
-            err_snack(page, "كلمة السر 6 أحرف على الأقل")
-            return
-        try:
-            add_doctor(n, clinic.value, spec.value.strip(), days, hours.value.strip(), u, p)
-        except sqlite3.IntegrityError:
-            err_snack(page, "اسم المستخدم مستخدم مسبقاً")
-            return
-        show_admin_home(page)
-        ok_snack(page, "تمت إضافة الطبيب، سيُطلب منه تغيير كلمة السر عند أول دخول")
-
-    page_view(page, h1("➕ إضافة طبيب", ft.Colors.PURPLE_800), name, clinic, spec, hours,
-              info("أيام العمل:", 13, True), ft.Wrap(list(day_boxes.values()), spacing=8), username, password,
-              success("حفظ", save, 50), back_btn("← رجوع", lambda e: show_admin_home(page)))
-
-
-def show_admin_add_staff(page):
-    if not require(page, "reception"):
-        return
-    roles = {"موظف استقبال / مدير": "reception", "فني مختبر": "lab", "صيدلي": "pharmacy"}
-    role = make_dropdown("الوظيفة", list(roles))
-    full_name = field("الاسم الكامل")
-    username = field("اسم المستخدم (بالإنجليزية)")
-    password = field("كلمة سر مؤقتة", password=True, can_reveal_password=True)
-
-    def save(e):
-        n, u, p = (full_name.value or "").strip(), (username.value or "").strip(), password.value or ""
-        if not (role.value and n and u):
-            err_snack(page, "أكمل جميع الحقول")
-            return
-        if len(p) < 6:
-            err_snack(page, "كلمة السر 6 أحرف على الأقل")
-            return
-        try:
-            add_user(u, n, roles[role.value], p, must_change=1)
-        except sqlite3.IntegrityError:
-            err_snack(page, "اسم المستخدم مستخدم مسبقاً")
-            return
-        show_admin_home(page)
-        ok_snack(page, "تمت إضافة الموظف")
-
-    page_view(page, h1("➕ إضافة موظف", ft.Colors.PURPLE_800), role, full_name, username, password,
-              success("حفظ", save, 50), back_btn("← رجوع", lambda e: show_admin_home(page)))
-
-
 # ===============================================================
 def main(page: ft.Page):
     page.title = HOSPITAL_NAME
@@ -1925,6 +1910,7 @@ def main(page: ft.Page):
     page.scroll = ft.ScrollMode.AUTO
     page.horizontal_alignment = ft.CrossAxisAlignment.CENTER
     page.bgcolor = ft.Colors.WHITE
+    STATE["page"] = page
 
     # شاشة تحميل أولاً، وأي خطأ في البداية يظهر نصه على الشاشة بدل الشاشة السوداء
     page.add(ft.Text("جاري التحميل...", size=16, color=ft.Colors.BLUE_900))
